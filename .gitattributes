@@ -1,0 +1,2 @@
+# LF everywhere: CRLF would change SKILL.md bytes and break the pinned script SHA-256.
+* text=auto eol=lf
