@@ -1,0 +1,5 @@
+interface:
+  display_name: "Escalating subagents"
+  short_description: "Tiered discover, implement and validate subagents with bounded model escalation. Explicit invocation only."
+policy:
+  allow_implicit_invocation: false
