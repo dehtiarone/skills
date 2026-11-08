@@ -1,0 +1,4 @@
+schema_version: "1.1"
+name: tier-d-early-fail-barrier
+context:
+  scaffold_script: fixture.sh

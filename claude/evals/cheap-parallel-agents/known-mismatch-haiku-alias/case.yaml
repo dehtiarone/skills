@@ -1,0 +1,4 @@
+schema_version: "1.1"
+name: known-mismatch-haiku-alias
+context:
+  scaffold_script: fixture.sh

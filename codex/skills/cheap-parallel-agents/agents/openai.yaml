@@ -1,0 +1,5 @@
+interface:
+  display_name: "Cheap parallel agents"
+  short_description: "Parallel Luna workers with effort-only escalation and evidence-based acceptance. Explicit invocation only."
+policy:
+  allow_implicit_invocation: false

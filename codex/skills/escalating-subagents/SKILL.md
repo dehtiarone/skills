@@ -1,10 +1,10 @@
 ---
 name: escalating-subagents
-description: Use when asked to fix a repository bug, implement a feature, or make a repository change. Coordinate discovery, implementation, and independent validation with bounded model escalation; route trivial edits to a single worker.
+description: Explicit-only orchestration for a repository bug fix, feature or change through tiered discover, implement and validate subagents with bounded model escalation; trivial edits go to a single worker. Invoke it by name; it is never applied automatically.
 license: MIT
 compatibility: Requires Bash 3.2+ and Git 2.31+ on macOS or Linux; Windows only via WSL.
 metadata:
-  version: "1.0.0"
+  version: "1.1.0"
   author: dehtiarone
   repository: https://github.com/dehtiarone/skills
 ---
@@ -14,6 +14,8 @@ metadata:
 Recommended coordinator: `gpt-6.1-sol` at low effort. Keep the parent's selected model; this skill does not change it. The main agent orchestrates: choose the tier, define acceptance criteria, brief workers, check handoffs, triage, and report. It never edits product code. Start from compact reports (at most 30 lines), scope diffs, and evidence paths; inspect more code or run checks when evidence is missing, disputed, or insufficient for tier D risk. Do not mechanically repeat checks on an unchanged patch.
 
 Workers execute one assigned stage and never delegate or invoke this skill. Respect host permissions and collaboration mode; Plan mode permits no implementation or mutation-producing discovery.
+
+Invocation: this skill runs only when the user invokes it by name; it is never applied automatically. Neither orchestration skill invokes the other, and workers invoke neither. When the user invokes both `cheap-parallel-agents` and this skill for one task, ask which one applies before dispatching.
 
 ## Tiers
 
@@ -29,9 +31,9 @@ Name the tier in the first progress line. Any stage may promote it; never demote
 ## Stages and checks
 
 1. **Acceptance criteria - parent:** define "Done means" before dispatch. A/B derive checks and expected outcomes from the request; C/D refine the draft after Discover. Implement and Validate receive identical criteria and the original request.
-2. **Discover - C/D:** confirm scope or reproduce the issue. No product edits; explicitly owned repro/test files are allowed. Report cause/scope with locations, evidence, proposed criteria, and open questions. For read-only discovery, prohibit repository edits in the brief and verify scope; do not invent a per-agent sandbox setting.
+2. **Discover - C/D:** confirm scope or reproduce the issue. Up to 3 read-only shards may run as one batch when their questions or paths are disjoint; each shard is a call at the stage rung and reports against `pre-N`; a shard that writes repro or test files owns them exclusively. No product edits; explicitly owned repro/test files are allowed. Report cause/scope with locations, evidence, proposed criteria, and open questions. For read-only discovery, prohibit repository edits in the brief and verify scope; do not invent a per-agent sandbox setting. Spawn each shard with its own `spawn_agent` call and the read-only brief.
 3. **Implement:** change only owned files; report edits, commands, exit status, and unfinished work.
-4. **Validate - B/C/D:** a fresh agent that did not implement checks the integrated patch against the request, specifications, and criteria. No repository edits or new regression tests; propose missing tests for Implement. Scratch reports and normal test artifacts are allowed. Report evidence per criterion and untested areas.
+4. **Validate - B/C/D:** a fresh agent that did not implement checks the integrated patch against the request, specifications, and criteria. No repository edits or new regression tests; propose missing tests for Implement. Scratch reports and normal test artifacts are allowed. Report evidence per criterion and untested areas. Tier D, or a criteria set too large for one brief, may split validation into at most two fresh validators with distinct briefs (tests and criteria; specification and regressions), dispatched together and awaited together; no repair starts until every validator of the cycle has returned, and after a repair the complete set runs fresh. Each validator is a call, and a validation cycle never overlaps the next Implement batch.
 
 Preflight test prerequisites before committing to commands. Prefer feasible alternatives only when their coverage is equivalent. Never substitute unit tests for required integration, end-to-end, visual, or device evidence merely to obtain PASS. Carry blocked required checks into the final outcome; do not assume any particular test runner can run in the sandbox. Retry environmental failures only after a concrete remedy.
 
@@ -50,7 +52,7 @@ Discover/Implement return DONE, PARTIAL, or BLOCKED. Validate returns PASS, FAIL
 Rung 2 is a fresh Luna retry with concrete correction evidence. Sol `low` is Light in the app, not an additional rung.
 For a concrete omission or misread brief, advance one rung; rung 2 is the single omission retry before the stronger model. For a confirmed reasoning failure at rung 1 or 2, jump directly to rung 3. At rung 3 or above, advance one rung. "Escalate" below means this rule. Stop when inadequate work exhausts rung 5. Productive continuations and corrected environmental failures do not advance rungs. Do not retry the same failed approach without a concrete correction; escalate instead. This does not prohibit productive continuations.
 
-Use the exposed Codex schema: `spawn_agent` with a unique `task_name`, complete brief in `message`, explicit `model`, `reasoning_effort`, and `fork_turns: "none"` where supported. Do not use a full-history fork for overrides. Report incompatible controls rather than changing global configuration or bypassing them with a nested CLI. Use `followup_task` for same-rung continuations and a fresh spawn for model/effort changes. Wait/list/steering calls do not create free extra assignments. Interrupt overdue workers and ensure writes stop before continuing.
+Use the exposed Codex schema: `spawn_agent` with a unique `task_name`, complete brief in `message`, explicit `model`, `reasoning_effort`, and `fork_turns: "none"` where supported. Do not use a full-history fork for overrides. Report incompatible controls rather than changing global configuration or bypassing them with a nested CLI. Use `followup_task` for same-rung continuations and a fresh spawn for model/effort changes. Wait/list/steering calls do not create free extra assignments. Interrupt overdue workers and ensure writes stop before continuing. Issue a batch as several `spawn_agent` calls, then `wait_agent` on each; the session's advertised slot count, which may include the parent, is the capacity signal, and a spawn refused for capacity is dispatched later without re-spawning running items.
 Record requested and observable effective settings; use `unavailable` when effective values are not exposed. Never silently substitute unavailable models or settings. Keep evidence paths in briefs instead of copying transcripts. Retry briefs name the correction/hypothesis and say **continue the patch** or **replace these hunks**.
 
 ## Accounting and triage
@@ -71,7 +73,7 @@ Track total calls, calls per stage, and rung per stage/work item separately. Eac
 
 Parent correction does not waive checks: acceptance requires evidence for every criterion. Continue validation in the same agent only if it never implemented and the patch is unchanged. After a repair, use a fresh validator. A correct FAIL at rung 5 does not exhaust the validator; triage the implementation.
 
-**Budgets:** A 3 calls; B 4; C/D 8. Check before dispatch: remaining calls must cover all proposed workers plus one final Validate when their work requires it. Validate itself needs only its own call. One left + final Validate is allowed; two left + Implement is allowed; two left + two Implements is not. Reduce a batch only if all required work still fits. Reserve implementation and validation after discovery. Recheck after promotion.
+**Budgets:** A 3 calls; B 4; C/D 8. Check before dispatch: remaining calls must cover all proposed workers plus one final Validate when their work requires it. Validate itself needs only its own call. Admission of a batch requires `remaining ≥ workers in this batch + Implement items outside this batch not yet dispatched + the final Validate set when required`; shrink width to fit, since serialising changes concurrency, not call count. Examples: tier B with three implementers, 3 + 0 + 1 = 4 of 4; tier C with two Discover shards and two planned items, 2 + 2 + 1 = 5 of 8; tier D with three shards, three items and two validators, 3 + 3 + 2 = 8 of 8. A full-width batch can leave no retry, as in the B and D examples; say so when choosing width. Reserve implementation and validation after discovery. Recheck after promotion.
 
 The last allowed call may complete the task successfully. Otherwise stop before unaffordable work, at final-rung failure, or for unresolved blockers. Never silently omit required work or claim completion with required validation outstanding. Ordinary implementation choices need no user question; record them.
 
@@ -85,7 +87,7 @@ sed -n '/^<!-- agent-snapshot:start -->$/,/^<!-- agent-snapshot:end -->$/p' SKIL
 
 Its SHA-256 (`shasum -a 256` or `sha256sum`) must be `ddc6cd474ae00cb7fc7613deefb4a9f5ff959f6b641abf041f1a7e26d7d8ca95`; a mismatch is a blocker. Use `<task>/state` separately for snapshots. Do not place the script inside the initially empty state directory. Run it with Bash, never source it.
 
-Record absolute repository, helper, and state paths in the parent ledger; pass them explicitly on every invocation, without relying on shell state across commands. Workers never run the helper or receive its control paths. Initialize successfully before any dispatch; report initialization errors and stop, identifying sandbox blockers only when permissions caused them. Uppercase words below are placeholders; quote actual paths:
+Record absolute repository, helper, and state paths in the parent ledger; pass them explicitly on every invocation as literal absolute paths, never through shell variables or state carried across commands. Workers never run the helper or receive its control paths. Initialize successfully before any dispatch; report initialization errors and stop, identifying sandbox blockers only when permissions caused them. Uppercase words below are placeholders; quote actual paths:
 
 ```text
 bash HELPER init REPO STATE
@@ -103,7 +105,7 @@ Helper failures are blockers. It rejects concurrent writes; do not delete a lock
 
 Use NUL-delimited changed paths for scope checks, `stat` for summaries, and the integrated patch for Validate. Out-of-scope edits are rejected unless the parent explicitly extends ownership for a legitimate dependency. Preserve unrelated work; never automatically reset, clean, stash, or revert it.
 
-Dispatch disjoint Implement workers together within available capacity. For each batch, compare against the union of ownership; reports provide individual attribution, not proof of authorship. Wait for the entire batch before checking scope or validating. Serialize shared files/infrastructure and unrelated concurrent writers that would contaminate snapshots.
+Implement runs in parallel by default. An item joins a batch only when all three hold: disjoint ownership (files or globs); dependencies satisfied (interfaces fixed in the brief, no item consumes another's unfinished output); no conflicting side effects (generated files, schema or migrations, databases, ports, caches, test fixtures, CI config). Otherwise serialise or merge. The default cap is 4 writers per batch; dispatch `min(cap, available slots)` in one message, and on a partial dispatch keep the spawned workers and dispatch the remainder when slots free, never re-spawning a running item. Every brief of a batch carries the parent's decisions list (names, interfaces, conventions chosen so far) and the batch snapshot name plus tree ID. For each batch, compare against the union of ownership; reports provide individual attribution, not proof of authorship. After the entire batch finishes, capture `post-N` and check its scope before dispatching the next batch or validating; read-only shards must leave `names0 pre-N post-N` empty. Serialize shared files/infrastructure and unrelated concurrent writers that would contaminate snapshots.
 
 Verify command results, evidence paths, cited locations, and file-state relevance at handoffs. New edits invalidate affected checks. Accepted work advances; rejected work returns to triage. Track long-running commands to completion and stop outstanding writes before snapshotting; background launch is not completion.
 
@@ -135,11 +137,12 @@ Example:
 [tier C] Implement · rung 3 (gpt-6.1-sol/low) · call 4/8 · 06:12 → accepted (3 files); next: Validate
 ```
 
-Use this literal final-report template, replacing bracketed fields. Use `unavailable` for unexposed usage/effective settings and `not assessed` for post-acceptance defects until evidence exists. Report actual external actions, not merely authorization.
+Use this literal final-report template, replacing bracketed fields. Use `unavailable` for unexposed usage/effective settings and `not assessed` for post-acceptance defects until evidence exists. Report actual external actions, not merely authorization. Report measured elapsed time and observed concurrency; make no savings claim without a serial baseline.
 
 ```text
 Tier: [A/B/C/D]
 Ledger: [stage/work item | rung | requested → effective model/effort | call n/N | elapsed | outcome]
+Parallelism: [batches | observed max concurrent | measured elapsed per batch]
 Verified: [checks, results, and who verified]
 Choices: [implementation decisions]
 Unresolved checks/work: [details or none]
