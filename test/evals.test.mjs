@@ -187,7 +187,13 @@ describe('grader patterns against representative tool inputs', () => {
     const line = '[tier B] Implement/item-2 · rung 1 (haiku/medium → unavailable) · call 3/7 · 04:10 → accepted (2 files, attempt-1.accept.md); next: capture post-1, Validate';
     assert.ok(progress.test(JSON.stringify({ text: line })), 'raw unicode');
     assert.ok(progress.test(JSON.stringify({ text: line }).replaceAll('·', '\\u00b7').replaceAll('→', '\\u2192')), 'escaped unicode');
-    assert.ok(!progress.test(JSON.stringify({ text: line.replace('haiku/medium', 'haiku/high') })), 'high is not on the ladder');
+    assert.ok(progress.test(JSON.stringify({ text: line.replace('haiku/medium', 'haiku/max') })), 'max is the top rung');
+    for (const skipped of ['high', 'xhigh']) {
+      assert.ok(!progress.test(JSON.stringify({ text: line.replace('haiku/medium', `haiku/${skipped}`) })), `${skipped} is not on the ladder`);
+    }
+    const skips = matcher(graders['skips-high-and-xhigh.md'], 'skips');
+    assert.ok(skips.test(JSON.stringify({ prompt: 'x', model: 'haiku', effort: 'xhigh' })) && skips.test(JSON.stringify({ model: 'haiku', effort: 'high' })));
+    assert.ok(!skips.test(JSON.stringify({ model: 'haiku', effort: 'max' })) && !skips.test(JSON.stringify({ model: 'haiku', effort: 'medium' })));
     const report = matcher(graders['final-report-fields.md'], 'report');
     const template = ['Tier: B', 'Coordinator: sonnet/high', 'Ledger: …', 'Pinning: Verified 3', 'Parallelism: 1 batch', 'Effort distribution: 0/3/0', 'Verified: C1', 'Choices: none', 'Unresolved checks/work: none', 'Working tree: clean', 'External actions: none', 'Usage: estimate', 'Post-acceptance defects: not assessed'].join('\n');
     assert.ok(report.test(template));

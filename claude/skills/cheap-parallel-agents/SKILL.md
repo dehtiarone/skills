@@ -6,7 +6,7 @@ disable-model-invocation: true
 argument-hint: "<change request>"
 compatibility: Requires Bash 3.2+ and Git 2.31+ on macOS or Linux (Windows only via WSL), and a Claude Code that exposes `model` and `effort` on the Agent tool and resolves `haiku` to Haiku 5.5 (Anthropic API, v2.1.293+).
 metadata:
-  version: "1.0.0"
+  version: "1.1.0"
   author: dehtiarone
   repository: https://github.com/dehtiarone/skills
 ---
@@ -43,9 +43,9 @@ The worker model never changes; effort does. `medium` is the default and the pla
 | 0    | `haiku` | `low`    | Mechanical work: read-only map shards, renames, moves, formatting, running a named command and reporting; no judgment calls     |
 | 1    | `haiku` | `medium` | Default for every Discover, Implement and Validate item                                                                          |
 | 2    | `haiku` | `medium` | Fresh worker with a concrete correction and the prior record path; the single omission retry                                    |
-| 3    | `haiku` | `xhigh`  | Only after a confirmed reasoning failure at rung 1 or 2, or a second PARTIAL without progress                                    |
+| 3    | `haiku` | `max`    | Only after a confirmed reasoning failure at rung 1 or 2, or a second PARTIAL without progress                                    |
 
-Skipped levels: `high` and `max` are skipped in this policy because the observed gain in independent coding evaluations did not justify another rung; do not fill the gap.
+Skipped levels: `high` and `xhigh` are skipped by design: the ladder keeps one escalation rung, and on the current independent coding evaluation `max` gave by far the largest gain over `medium`; `high` is a smaller, cheaper step that this policy does not use. Do not fill the gap.
 Rung 0 briefs say: no judgment calls; return BLOCKED when one is needed. Validators start at `medium` in every tier. A correct FAIL never escalates a validator. Environmental failures never advance rungs. There is no model escalation: when the ladder is exhausted the coordinator stops and reports.
 
 | Finding                                                                                                        | Action                                                                                                                                                 | Counts                              |

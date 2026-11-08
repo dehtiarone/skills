@@ -4,6 +4,10 @@ Source: Cognition's public result file, <https://cognition.com/data/frontiercode
 
 **Release gate:** before tagging a release, re-download the file, confirm every row below (model, harness, variant, benchmark version) and reconcile the README table against this file.
 
+**Verification, 2026-11-09:** the file was downloaded raw with curl (HTTP 200, 88,965 bytes, `Last-Modified: Thu, 05 Nov 2026 23:33:05 GMT`, SHA-256 `9306c93c1029981c8e5bd3e1cf6d18d4d669690622e92b88f23d939e9abb8070`). It holds two benchmark versions, `v1` and `v1_1`; every row below sits under `v1_1`, so these are **FrontierCode 1.1** rows. A script compared all 120 preserved values (score, pass rate, cost and tokens for 30 rows) against the file: 120 match exactly, and the harness labels match. The file publishes scores and costs at 4 decimals, and "unrounded" here means no rounding beyond that. The deltas below recompute identically from the file. The file contains no FrontierCode 2.0 rows; the current 2.0 suite has its own file, preserved in [frontiercode-2.0-2026-11-09.md](frontiercode-2.0-2026-11-09.md), and its per-effort shape differs for Haiku 5.5.
+
+**Status:** superseded for the ladders from 1.2.0, which rest on the FrontierCode 2.0 rows. These rows remain the evidence for the 1.1.0 ladders.
+
 Field mapping used here: score = `new_score` (composite, 0–1), pass rate = `correct`, cost = mean `cost` in USD per rollout (includes rollouts without an acceptable patch), tokens = mean `tokens` output per rollout. Harness: `claude-code` for Anthropic models, `codex` for OpenAI models. Only the `main` variant feeds the README table.
 
 ## Claude Haiku 5.5 (harness claude-code)
