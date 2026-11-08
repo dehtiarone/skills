@@ -1,6 +1,27 @@
 # Changelog
 
-## 1.1.0 (unreleased)
+## 1.2.0 (2026-11-09)
+
+### cheap-parallel-agents 1.1.0
+
+- Effort ladders rest on FrontierCode 2.0 (Cognition's rebuilt 132-task suite, current since 2026-10-27) instead of
+  FrontierCode 1.1. Haiku moves from `low → medium → xhigh` to `low → medium → max`: on 2.0, Haiku gains at every step,
+  so `high` and `xhigh` are now skipped by design (one escalation rung, and `max` gives by far the largest gain), not
+  for lack of gain. The Luna ladder stays `low → medium → max`; its skip rationale is reworded (`max` is both the
+  largest gain over `medium` and the cheapest per point).
+- The Codex coordinator recommendation becomes `high` (GPT-6.1 Sol `high` scores above `medium` on 2.0), including the
+  recommendation given to an `ultra` parent. Sonnet stays at `high`.
+
+### Evidence, docs and evals
+
+- `docs/evidence/frontiercode-2.0-2026-11-09.md` preserves the 2.0 rows, deltas and the per-rung comparison.
+  `docs/evidence/frontiercode-2026-11-07.md` records the 2026-11-09 verification: its rows are FrontierCode 1.1 and
+  all 120 values match Cognition's file exactly.
+- README: ladder table, deltas and caveats from 2.0; layout re-aligned; eval command pins `--model sonnet` and keeps
+  traces; the release checklist now dates the changelog before tagging and writes release notes from it.
+- Graders: the progress line accepts `haiku/max`, and `skips-high-and-xhigh` replaces `skips-high-and-max`.
+
+## 1.1.0 (2026-11-09)
 
 ### Both skills
 

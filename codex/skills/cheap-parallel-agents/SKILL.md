@@ -4,7 +4,7 @@ description: Explicit-only orchestration for a repository bug fix, feature, refa
 license: MIT
 compatibility: Requires Bash 3.2+ and Git 2.31+ on macOS or Linux (Windows only via WSL), and a Codex with multi-agent tools whose `spawn_agent` accepts `model` and `reasoning_effort` for non-fork spawns, or `[agents]` defaults that select `gpt-6-luna`.
 metadata:
-  version: "1.0.0"
+  version: "1.1.0"
   author: dehtiarone
   repository: https://github.com/dehtiarone/skills
 ---
@@ -13,7 +13,7 @@ metadata:
 
 Invocation: this skill runs only when the user invokes it by name; it is never applied automatically. Neither orchestration skill invokes the other, and workers invoke neither. When the user invokes both `escalating-subagents` and this skill for one task, ask which one applies before dispatching.
 
-Assumed coordinator: the parent model as the user selected it, typically GPT-6.1 Sol; `medium` is an initial effort recommendation to evaluate, not a setting this skill changes. A parent at `ultra` may delegate proactively: disclose this in the first progress line, recommend `medium`, delegate only through this skill's dispatches, and account for any extra assignment under "Pinning". Record the actual parent model and effort in the ledger header. The coordinator orchestrates: classify the tier, write "Done means" criteria, decompose into items, fix interfaces and decisions, brief workers, dispatch batches, capture snapshots, inspect every acceptance record, triage, and report. It never edits product code and never reads worker transcripts. It reads evidence excerpts as acceptance requires, and the integrated patch for tier D acceptance, disputed validation, and scope violations.
+Assumed coordinator: the parent model as the user selected it, typically GPT-6.1 Sol; `high` is an initial effort recommendation to evaluate, not a setting this skill changes. A parent at `ultra` may delegate proactively: disclose this in the first progress line, recommend `high`, delegate only through this skill's dispatches, and account for any extra assignment under "Pinning". Record the actual parent model and effort in the ledger header. The coordinator orchestrates: classify the tier, write "Done means" criteria, decompose into items, fix interfaces and decisions, brief workers, dispatch batches, capture snapshots, inspect every acceptance record, triage, and report. It never edits product code and never reads worker transcripts. It reads evidence excerpts as acceptance requires, and the integrated patch for tier D acceptance, disputed validation, and scope violations.
 
 Workers run on one cheap model only and execute one assigned item each. They never delegate, never invoke this or any orchestration skill, and never run the snapshot helper. Respect host permissions and collaboration mode; Plan mode permits no implementation or mutation-producing discovery.
 
@@ -43,7 +43,7 @@ The worker model never changes; effort does. `medium` is the default and the pla
 | 2    | `gpt-6-luna` | `medium`           | Fresh worker with a concrete correction and the prior record path; the single omission retry                                    |
 | 3    | `gpt-6-luna` | `max`              | Only after a confirmed reasoning failure at rung 1 or 2, or a second PARTIAL without progress                                    |
 
-Skipped levels: `high` and `xhigh` are skipped in this policy because the observed gain in independent coding evaluations did not justify another rung; do not fill the gap.
+Skipped levels: `high` is skipped because its observed gain over `medium` in independent coding evaluations did not justify a rung, and `xhigh` because the ladder keeps one escalation rung and `max` bought more score per dollar. Do not fill the gap.
 Rung 0 briefs say: no judgment calls; return BLOCKED when one is needed. Validators start at `medium` in every tier. A correct FAIL never escalates a validator. Environmental failures never advance rungs. There is no model escalation: when the ladder is exhausted the coordinator stops and reports.
 
 | Finding                                                                                                        | Action                                                                                                                                                 | Counts                              |

@@ -14,7 +14,7 @@ outcome, and `llm` judges over the final report only.
 From the repository root. Bash, Write, Edit and SendMessage must be granted; runs never prompt:
 
 ```bash
-claude plugin eval ./claude --tag cheap-parallel-agents --scaffold --trust-plugin --allow-tools Write Edit "Bash(*)" SendMessage --ablation none --runs 3
+claude plugin eval ./claude --tag cheap-parallel-agents --model sonnet --scaffold --trust-plugin --allow-tools Write Edit "Bash(*)" SendMessage --ablation none --runs 3 --keep-temp
 ```
 
 `--tag` selects the nine ordinary cases. Case names are directory names, so a path glob such as
@@ -23,14 +23,14 @@ their override from the runner's shell, because case `env` accepts only `EVAL_*`
 `CLAUDE_CODE_*` and `ANTHROPIC_*` from the shell:
 
 ```bash
-CLAUDE_CODE_EFFORT_LEVEL=low claude plugin eval ./claude --case unavailable-pinning-effort-env --scaffold --trust-plugin --allow-tools Write Edit "Bash(*)" SendMessage --ablation none
+CLAUDE_CODE_EFFORT_LEVEL=low claude plugin eval ./claude --case unavailable-pinning-effort-env --model sonnet --scaffold --trust-plugin --allow-tools Write Edit "Bash(*)" SendMessage --ablation none
 ```
 
 ```bash
-ANTHROPIC_DEFAULT_HAIKU_MODEL=claude-haiku-4-5 claude plugin eval ./claude --case known-mismatch-haiku-alias --scaffold --trust-plugin --allow-tools Write Edit "Bash(*)" SendMessage --ablation none
+ANTHROPIC_DEFAULT_HAIKU_MODEL=claude-haiku-4-5 claude plugin eval ./claude --case known-mismatch-haiku-alias --model sonnet --scaffold --trust-plugin --allow-tools Write Edit "Bash(*)" SendMessage --ablation none
 ```
 
-Pin `--model` to the coordinator you ship for (latest Sonnet) so a model rollout is not mistaken for a skill regression.
+The commands pin `--model sonnet`, the coordinator the skill is written for, so a model rollout is not mistaken for a skill regression.
 Three runs per case is a smoke level of evidence, not proof of reliable orchestration; raise `--runs` before a release.
 If `claude plugin eval` is unavailable on the machine, run the same scenarios by hand from
 `codex/evals/cheap-parallel-agents/README.md`, which lists what to inspect for each case. Known constraint to verify on

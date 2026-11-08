@@ -57,13 +57,23 @@ it('admits batches against the full reserve, guards the final repair cycle, and 
 
 it('keeps the README ladder numbers equal to the preserved evidence rows', () => {
   const readme = readFileSync(join(repoRoot, 'README.md'), 'utf8');
-  const evidence = readFileSync(join(repoRoot, 'docs/evidence/frontiercode-2026-11-07.md'), 'utf8');
+  const evidencePath = 'docs/evidence/frontiercode-2.0-2026-11-09.md';
+  const evidence = readFileSync(join(repoRoot, evidencePath), 'utf8');
+  assert.ok(readme.includes(`(${evidencePath})`), 'README links the primary evidence file');
   const cited = [...readme.matchAll(/\| (Haiku 5\.5|GPT-6 Luna) +\|([^\n]*)\|/g)];
   assert.equal(cited.length, 2, 'README cites one row per worker model');
   for (const [, model, cells] of cited) {
     for (const value of cells.match(/\.\d{4}|\$\d+\.\d+/g) ?? []) {
       assert.ok(evidence.includes(value), `${model}: ${value} appears in docs/evidence`);
     }
+  }
+});
+
+it('uses max as the single top rung on both hosts and never lists high or xhigh as a rung', () => {
+  for (const { host, document } of skills) {
+    const rungs = [...document.matchAll(/^\| ([0-3]) +\| `[^`]+` +\| `([a-z]+)` +\|/gm)].map(([, rung, effort]) => `${rung}:${effort}`);
+    assert.deepEqual(rungs, ['0:low', '1:medium', '2:medium', '3:max'], `${host}: ladder rungs`);
+    assert.match(document, /^Skipped levels: `high`[^\n]*`xhigh`[^\n]*Do not fill the gap\.$/m, `${host}: skipped levels`);
   }
 });
 

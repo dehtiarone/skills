@@ -2,7 +2,7 @@
 
 Codex has no eval runner for skills, so these are the same scenarios as `claude/evals/cheap-parallel-agents/`, run by
 hand in **Codex inside ChatGPT for Mac** (primary) or `codex` on the command line with the model and effort pinned
-(`-m gpt-6.1-sol -c model_reasoning_effort=medium`, supplemental). Before a run, select the coordinator in the app and
+(`-m gpt-6.1-sol -c model_reasoning_effort=high`, supplemental). Before a run, select the coordinator in the app and
 note the controls the session actually exposes: ask the agent to print the `spawn_agent` tool's fields and the
 advertised slot count. Inspect behaviour, not the narrative.
 
