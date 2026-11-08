@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.2.0 (unreleased)
+## 1.2.0 (2026-11-09)
 
 ### cheap-parallel-agents 1.1.0
 
