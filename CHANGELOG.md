@@ -35,14 +35,21 @@ Budget changes (units; a cheap call is 1 unit, an expensive call 8 on Claude Cod
 | C | 8 | 10 | 30 | 50 |
 | D | 8 | 12 | 36 | 64 |
 
-Takes per item are new: 8 per produce item and 4 per map or verify item on Claude Code, 12 and 6 on Codex. The fixed caps of 4 writers and 3 read-only shards are replaced by the smallest of eligible items, host slots, a ceiling of 6 writers and budget admission. Larger budgets come with no-progress detection that stops stuck items early.
+Takes per item are new: 8 per produce item and 4 per map or verify item on Claude Code, 12 and 6 on Codex. The fixed caps of 4 writers and 3 read-only shards are replaced by the smallest of eligible items, host slots, limits the plan declares and budget admission; there is no built-in ceiling. Larger budgets come with no-progress detection that stops stuck items early.
 
 ### escalating-agents 2.0.0 (new)
+
+- Acceptance: a PASS needs exit status 0, a command that is more than fixed text, and the plan's `check:` and `expect:` where given; a required check that was not run blocks acceptance; every validator the tier requires must pass the same frozen state; the report says `state: complete`, `incomplete (why)` or `INVALID` and lists criteria that passed only on a worker-chosen check.
+- Safety: the script never executes a recorded command that looks like it changes an external system, logs every command it runs, refuses a plan line that holds a detected secret and withholds detected values from all output. Both are screens, not guarantees.
+- Workspace: a change nobody dispatched blocks the next batch until `ledger.sh drift TASK accept "<who and why>"`; nothing is reverted; every report re-checks the workspace against the validated state.
+- Pinning: a known mismatch stops dispatch until the user accepts it (`ledger.sh pinning TASK accept "<their words>"`); such a run is labelled.
+- Width: no built-in writer ceiling; `limit <n>`, `writers <n>` and `locks: <name>` in the plan; globs that may match the same path are serialised.
+- Resume: `ledger.sh reconcile TASK` records finished workers from their report files after a compaction; `result --worker <id>` stores a worker's id.
 
 - `scripts/ledger.sh` holds the run: plan, admission, dispatch parameters, results, the effort ladder, the model gate, evidence acceptance, scope checks, the progress log, `status` for resuming after a compaction, and the final report. All run state lives in the task directory.
 - `scripts/agent-snapshot.sh` is a file run by path instead of a block embedded in SKILL.md and extracted with `sed`; the SHA-256 pin is gone with the extraction. New: `init --plain` for directories that are not git repositories, and `checkpoint`, which captures a snapshot, checks changed paths against owned globs and writes the integrated patch in one call.
 - Worker brief templates (`references/briefs/`) are assembled by the script; the coordinator's prompt to a worker is two lines.
-- SKILL.md is 11.8 KB on Claude Code and 12.2 KB on Codex, down from 33.5 KB and 33.9 KB; everything situational moved to `references/`.
+- SKILL.md is 13.0 KB on Claude Code and 13.1 KB on Codex, down from 33.5 KB and 33.9 KB; everything situational moved to `references/`.
 - New evidence types: `source`, `command-output`, `reconciliation`, `recompute`, `schema`. External systems are read-only unless the user authorised an action; recorded commands are scanned for changing verbs and run files for secrets.
 - Codex: `agents/openai.yaml` gains a `default_prompt` and a `short_description` within the documented 25–64 characters.
 

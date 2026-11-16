@@ -52,7 +52,7 @@ Moving up in effort is easy: one failed take is enough, and at the lowest level 
 5. Making the item smaller was tried once and failed, or is recorded as impossible.
 6. The budget still covers the expensive call, the validation after it and the reserve, by the same formula every dispatch uses.
 
-The expensive model then gets exactly one take at `high`, from a fresh brief; if that fails, the item stops unresolved. Restarting it at `low` was rejected on independent evidence: Sonnet 5.5 at `low` and `medium` scores below Haiku 5.5 at `high` on coding. Status of that evidence: solid for the Claude pair on coding; GPT-6.1 Terra has no FrontierCode row, so its rung rests on Artificial Analysis and is an initial recommendation to evaluate; for research and data work every coding number is only a proxy.
+The expensive model then gets exactly one take at `high`, from a fresh brief; if that fails, the item stops unresolved. Restarting it at `low` was rejected on independent evidence: Sonnet 5.5 at `low` and `medium` scores below Haiku 5.5 at `high` on coding. Status of that evidence: solid for the Claude pair on coding as an aggregate ordering, which is not the same as a measured rescue rate after Haiku has failed; on tool use (Zapier) the ordering is the opposite; GPT-6.1 Terra has no FrontierCode row, so its rung rests on Artificial Analysis and is an initial recommendation to evaluate; for research and data work every coding number is only a proxy.
 
 ## Budgets
 
@@ -65,7 +65,7 @@ A cheap call costs 1 unit; an expensive call costs 8 on Claude Code and 4 on Cod
 | C    | unknown scope or cause, or a substantial task; the default                                                   | 30                 | 50           | 1          |
 | D    | production or shared systems, irreversible or costly changes, secrets or personal data, numbers people act on | 36                 | 64           | 2          |
 
-Takes per item: 8 for a produce item and 4 for a map or verify item on Claude Code; 12 and 6 on Codex. Batch width is the smallest of eligible items, the host's free slots, six writers, and what the budget admits.
+Takes per item: 8 for a produce item and 4 for a map or verify item on Claude Code; 12 and 6 on Codex. Batch width is the smallest of eligible items, the host's free slots, a limit the plan declares (a service's rate limit, or fewer writers if the user wants), and what the budget admits. There is no built-in ceiling.
 
 ## Evidence
 
@@ -80,10 +80,10 @@ The ladders rest on evaluations that are not published, run, funded or curated b
 GPT-6.1 Terra is not in the file. What the numbers do and do not show:
 
 - Haiku gains at every step. Luna gains almost everything from `low` to `medium`; its `low` is very weak on tasks of this size.
-- Starting at `low` is a design rule, not a benchmark result. On FrontierCode-sized tasks it saves a little on Haiku and is about cost-neutral, and slower, on Luna. The skill's items are much smaller than these tasks, which no independent source measures.
+- Starting at `low` is a design rule, not a saving shown by any benchmark. A `low` attempt followed by `medium` on failure costs `C_low + (1 − p_low) × C_medium`, where `p_low` is the share of items `low` passes outright. It is cheaper than starting at `medium` only when `p_low` exceeds `C_low / C_medium`: 0.67 for Haiku and 0.25 for Luna. On FrontierCode-sized tasks `p_low` is far below that (0.106 and 0.041), so a `low` start there would cost about 55 % more than a `medium` start on Haiku ($0.152 against $0.097) and about 20 % more on Luna ($0.111 against $0.092), and be slower. These are plug-in estimates from published means, not measurements, and the benchmark does not publish which tasks each effort solves. The skill's items are much smaller than these tasks, and whether `low` passes them often enough to pay (two in three first takes on Haiku, one in four on Luna) is unmeasured.
 - Cheap workers alone do not establish lower total cost. The final report records elapsed time, concurrency and units, and makes no savings claim without a serial baseline.
 
-Orchestration rules use independent research as heuristics: a small writer ceiling (CAID, arXiv 2603.21489, improved from two to four parallel engineers and fell at eight); verification by executed checks rather than a model's judgment (MAST, arXiv 2503.13657; AgentRewardBench, arXiv 2504.08942); decomposing after a failure before changing model (ADaPT, arXiv 2311.05772); a fresh start for the stronger model (SWE-Router, arXiv 2607.00053); few dependent steps per worker (Sinha et al., arXiv 2509.09677).
+Orchestration rules use independent research as heuristics, not as calibration: verification by executed checks rather than a model's judgment (MAST, arXiv 2503.13657; AgentRewardBench, arXiv 2504.08942); decomposing after a failure before changing model (ADaPT, arXiv 2311.05772); few dependent steps per worker (Sinha et al., arXiv 2509.09677). Two rules, a fresh start for the stronger model and the choice of one expensive rung at `high` for every kind of task, rest partly on results measured on SWE-bench Verified, a subset OpenAI curated, or on aggregate leaderboard order rather than on rescue rates after a cheap failure; the source index marks each such result, and both rules are initial choices to be measured, not findings.
 
 ## Layout
 
@@ -109,7 +109,7 @@ Everything under a skill directory except `SKILL.md`, `references/pinning.md` an
 
 - Bash 3.2+ and Git 2.31+
 - macOS or Linux; Windows only via WSL
-- A host with subagent tooling: Claude Code 2.1.293+ (Agent tool with `model` and `effort`, and `haiku` resolving to Haiku 5.5), or Codex 0.155.0+ with multi-agent tools. Not for claude.ai chat.
+- A host with subagent tooling: Claude Code 2.1.293+ (Agent tool with `model` and `effort`, and `haiku` resolving to Haiku 5.5), or a Codex release with multi-agent tools whose `spawn_agent` accepts `model` and `reasoning_effort` (0.169.0 was checked; no minimum version is documented). Not for claude.ai chat.
 
 ## Install
 

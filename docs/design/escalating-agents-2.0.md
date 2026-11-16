@@ -58,11 +58,11 @@ Caveats. For the Codex pair the evidence points to (a) being viable too: Terra `
 
 Starting everything at `low` is a requirement. Its cost, stated plainly:
 
-- A `low` start is cheaper than a `medium` start when the share of `medium`-solvable items that `low` also solves exceeds the cost ratio of the two calls. For Haiku the share is about 0.75 on FrontierCode against a cost ratio of 0.67: a small saving. For Luna the share is 0.25 against a cost ratio of 0.25: break-even, and slower by one short failed call for three items in four.
+- A `low` attempt followed by `medium` on failure costs `C_low + (1 − p_low) × C_medium`, where `p_low` is the share of items `low` passes outright. It is cheaper than starting at `medium` only when `p_low` exceeds `C_low / C_medium`: 0.67 for Haiku and 0.25 for Luna. On FrontierCode-sized tasks `p_low` is far below that (0.106 and 0.041), so a `low` start there would cost about 55 % more than a `medium` start on Haiku ($0.152 against $0.097) and about 20 % more on Luna ($0.111 against $0.092), and be slower. These are plug-in estimates from published means, not measurements, and the benchmark does not publish which tasks each effort solves.
 - Independent research says cascading wastes money where the cheap setting is very weak (Chen et al.), and Luna `low` is very weak on hard tasks (FrontierCode .0405, Terminal-Bench 4.0 .000 at Artificial Analysis).
 - The skill's items are far smaller than benchmark tasks, where `low` should succeed much more often; no independent source measures that.
 
-So on Codex the `low` start is expected to be roughly cost-neutral and somewhat slower for hard items, and cheaper for easy ones. Three things keep it safe rather than merely cheap: the script-run evidence check (a `low` worker cannot wave work through), the automatic step to `medium` with no diagnosis, and larger Codex budgets. No role was found for which `low` is unsafe, so no exception is proposed. If measured runs show Luna `low` failing most first takes, the smallest change would be a Codex-only start at `medium`; it is not adopted because it would break "one ladder shape on both hosts".
+So on tasks as hard as the benchmark's, the `low` start costs more and takes longer on both hosts; it pays only where `low` passes most first takes, which is plausible for small items and unmeasured. The `low` start is kept because it is required, not because a saving is shown. Three things keep it safe: the script-run evidence check (a `low` worker cannot wave work through), the automatic step to `medium` with no diagnosis, and larger Codex budgets. No role was found for which `low` is unsafe, so no exception is proposed. If measured runs show Luna `low` failing most first takes, the smallest change would be a Codex-only start at `medium`; it is not adopted because it would break "one ladder shape on both hosts".
 
 ### 3.3 Coordinator
 
@@ -82,7 +82,7 @@ The Codex minimum is 5 because Luna's `high` adds little over `medium`, so one f
 
 Unit of account: a cheap call is 1 unit; a level 4 call is 8 units on Claude Code (Sonnet `high` costs 7.7 times Haiku `high` on FrontierCode, 10.3 times at Artificial Analysis) and 4 on Codex (Terra `high` costs 3.5 times Luna `high` at Artificial Analysis). Cost-weighted units were adopted because the script, not the coordinator, does the arithmetic, and they make escalation self-limiting.
 
-**Takes per item.** Produce, Claude: three cheap levels + one omission retry + one narrowing take + one level 4 take + one continuation + one environment retry = 8. Map and verify, Claude: three levels + one retry = 4. Codex: 12 and 6, factor 1.5, covering one extra continuation per cheap level: Luna's `low` rollouts are short (6.5k output tokens on FrontierCode against 31k at `medium`), so it returns PARTIAL more often.
+**Takes per item.** Produce, Claude: three cheap levels + one narrowing take + one level 4 take + room for continuations and environment retries = 8. Map and verify, Claude: three levels + one retry = 4. Codex: 12 and 6, factor 1.5, covering one extra continuation per cheap level: Luna's `low` rollouts are short (6.5k output tokens on FrontierCode against 31k at `medium`), so it returns PARTIAL more often.
 
 **Run budgets, Claude Code.** Budget = planned calls + one step-up per item + reserve + one full climb. With M map items, n produce items, V validators, reserve `1 + V`, and a full climb costing 3 further cheap takes plus the 8-unit call:
 
@@ -112,9 +112,9 @@ Evidence for the factor is indirect: Luna's first-take failure rate at `low`, it
 
 ## 6. Parallelism
 
-Width = min(eligible items, host slots, writer ceiling, admission). Eligibility: disjoint owned outputs (the script tests the globs), satisfied `after:` dependencies, no shared side effects (the coordinator encodes these as `after:` from map reports). Validators never share a batch with writers, and nothing is dispatched while a validator is out.
+Width = min(eligible items, host slots, declared limits, admission). Eligibility: owned globs that provably cannot match one path (prefix and suffix test; an uncertain pair is serialised), satisfied `after:` dependencies, and no shared `locks:` name (databases, ports, caches, generated files, from map reports). Host slots, a declared `limit` and the throttle backoff are stored separately and the smallest wins. Validators never share a batch with writers, and nothing is dispatched while a validator is out.
 
-The fixed caps of 4 writers and 3 read-only shards are gone. Read-only map items have no ceiling: no independent study supports one. For writers a ceiling stays, at 6 and configurable (`writers <n>`): CAID improved from 2 to 4 parallel engineers and fell at 8, and agent pull requests conflict often when co-active. Those studies had agents share files; here ownership is disjoint and checked, which removes the merge-conflict mechanism but not integration errors, so the ceiling is set between the two measured points and labelled an initial recommendation to evaluate.
+The fixed caps of 4 writers and 3 read-only shards are gone. Read-only map items have no ceiling: no independent study supports one. Writers have no built-in ceiling either: the requirement is width by capacity, and the one study that could have supported a number does not transfer (CAID improved from 2 to 4 parallel engineers and fell at 8 on Commit0, but its engineers worked in isolated git worktrees and merged, a different mechanism from disjoint ownership in one tree; its other benchmark, PaperBench, is OpenAI's). A user who wants fewer parallel writers writes `writers <n>` in the plan.
 
 Width against the retry reserve: a finer split means more first takes, all counted by admission from the start; when the budget cannot carry them plus validation plus the reserve, the script refuses and the coordinator merges. The budgets above assume the finer split.
 
@@ -147,20 +147,20 @@ Loading plan: SKILL.md always. Tier A or B code task: nothing else. `kind-infra.
 
 | Measure | 1.2.0 | 2.0.0 |
 | ------- | ----- | ----- |
-| Largest SKILL.md | 33,928 B (about 8,500 tokens), 337 lines | 12,155 B Codex, 11,822 B Claude (about 3,000 tokens), 108 and 111 lines |
-| Loaded for a tier B code run | 33,468 B | 11,822 B |
-| Loaded for a tier D code run, no failures | 33,468 B | 15,538 B (SKILL.md, `tiers.md`, `kind-code.md`) |
-| Loaded for a tier D run with a gate | 33,468 B | 21,083 B (adds `triage.md`) |
+| Largest SKILL.md | 33,928 B (about 8,500 tokens), 337 lines | 13,111 B Codex, 12,950 B Claude (about 3,300 tokens; 38.6 % and 38.2 % of before), 110 and 113 lines |
+| Loaded for a tier B code run | 33,468 B | 12,950 B |
+| Loaded for a tier D code run, no failures | 33,468 B | 17,012 B (SKILL.md, `tiers.md`, `kind-code.md`) |
+| Loaded for a tier D run with a gate | 33,468 B | 24,122 B (adds `triage.md`) |
 | Coordinator text per brief | 15 required fields; about 1,500–2,500 B (estimate, no trace kept) | two lines, 316 B in the live run, plus one plan line per item |
 
-Byte counts are measured; token counts assume four bytes per token. Claude Code re-attaches an invoked skill after compaction up to 5,000 tokens, so the whole SKILL.md survives.
+Byte counts are measured static document loads, not peak coordinator context (replies, plan lines, script output and the report add to it); token counts assume four bytes per token. Claude Code re-attaches an invoked skill after compaction up to 5,000 tokens, so the whole SKILL.md survives.
 
 ## 9. Progress log
 
 The format follows the brief's proposal with these decisions:
 
 - `units` replaces `calls` in budget fields, because calls are cost-weighted.
-- A batch of two or more prints one `batch` line and no per-worker `started` lines, on both hosts: both hosts show running subagents in their own interface, and each relayed line costs coordinator output. A single dispatch prints its `started` line. Every `started` line is still written to `TASK/log.txt`.
+- A batch of two or more prints one `batch` line and then one `started` line per worker, as the requested format has it.
 - A produce item's `done` line is printed at batch close, after the script has re-run its checks, so a line never says `done` for work that then fails.
 - A `model` line carries the failure that led to it, then `gate 6/6` and the record's file name.
 - Symbols default to Unicode in a UTF-8 locale and to the ASCII set otherwise, detected by the script on both hosts; `--ascii` forces it.
@@ -171,10 +171,10 @@ Enumerated in `test/escalating-agents.test.mjs`. In SKILL.md: frontmatter (`disa
 
 Checked against current host behaviour:
 
-- Claude Code: `general-purpose` for every worker; `Explore` denies Write, so it cannot write its report file; a fork inherits the parent; subagents run in the background by default and validators are run in the foreground; the concurrency error text starts "Concurrent subagent limit reached"; per-call `model` outranks a subagent definition's `model`, which outranks `CLAUDE_CODE_SUBAGENT_MODEL`; `CLAUDE_CODE_EFFORT_LEVEL` outranks per-call effort.
+- Claude Code: `general-purpose` for every worker; `Explore` denies Write, so it cannot write its report file; a fork inherits the parent; subagents Claude starts may run in the background, so the skill says to wait for every return (or completion notice) rather than naming a foreground flag; the concurrency error text starts "Concurrent subagent limit reached"; per-call `model` outranks a subagent definition's `model`, which outranks `CLAUDE_CODE_SUBAGENT_MODEL`; `CLAUDE_CODE_EFFORT_LEVEL` outranks per-call effort.
 - Pinned subagent definitions (`agents/*.md` with `model: haiku`) are not shipped: the per-call parameter already wins, a definition fixes one effort so six files would be needed, and users who copy `skills/` alone would not get them. `pinning.md` mentions them as an option.
 - Codex: `fork_turns: "none"` always; the advertised slot count is passed as `--slots`; role files and `[agents]` defaults are shown as a fallback in `pinning.md`, not shipped. The script prints `reasoning_effort=` on Codex and `effort=` on Claude Code, and marks validators with `barrier=yes` instead of a host-specific background flag.
-- Pinning verdicts are derived, not asserted: Known mismatch from the environment preflight, from `ledger.sh pinning TASK mismatch`, or from any `--ran` that differs; Verified only when every call's `--ran` equals the request.
+- Pinning verdicts are derived, not asserted: Known mismatch from the environment preflight, from `ledger.sh pinning TASK mismatch`, or from any `--ran` that differs; Verified only when every call's `--ran` equals the request. A Known mismatch stops dispatch until the user accepts it (`pinning accept`), because the models and efforts are requirements, not preferences.
 
 Vendor guidance followed (how to write a skill, not performance evidence): Anthropic, "Skill authoring best practices" (<https://platform.claude.com/docs/en/agents-and-tools/agent-skills/best-practices>) and Claude Code "Skills" (<https://code.claude.com/docs/en/skills>): body under 500 lines, third-person description of what and when, references one level deep from SKILL.md, scripts executed rather than read, no time-sensitive content, one term per concept, checklists and feedback loops. The Agent Skills specification (<https://agentskills.io/specification>): `name` matches the directory, description up to 1,024 characters, `scripts/`, `references/`, instructions under 5,000 tokens. OpenAI's `skill-creator` guidance shipped with the Codex client: include only what changes decisions, keep discovery cheap, disclose detail progressively, use `scripts/` where deterministic execution improves reliability, keep `agents/openai.yaml` consistent with the skill, `short_description` of 25–64 characters, `default_prompt` naming `$skill`.
 
@@ -192,11 +192,11 @@ One conflict: OpenAI's guidance says to avoid tests that "merely match generated
 
 ## 12. Open risks
 
-1. **The ledger script is large** (about 1,400 lines of Bash 3.2). It is covered by scenario tests, but a bug in it is a bug in every run. Its verdict lines are the interface; the coordinator has no fallback if it fails, other than reporting the failure.
-2. **Re-running recorded commands** executes strings written by a cheap worker, in the coordinator's sandbox. That is the same trust a validator already had, but it now happens in the parent's process. The changing-verb scan is a heuristic, not a sandbox: it can miss a changing command and can flag a read-only one. A check that writes non-ignored files shows up as a change after validation.
+1. **The ledger script is large** (about 1,760 lines of Bash 3.2). It is covered by scenario tests, but a bug in it is a bug in every run. Its verdict lines are the interface; the coordinator has no fallback if it fails, other than reporting the failure.
+2. **Re-running recorded commands** executes strings written by a cheap worker, in the coordinator's environment and with its credentials. The script refuses, before execution, commands that look like they change an external system, and in infra runs any cloud or database CLI command the plan did not fix; it logs every command it runs. That is a screen, not a sandbox: a changing command it does not recognise still runs. The real protection for cloud work is a read-only identity, which the skill recommends and cannot enforce.
 3. **The `low` start on Codex** may cost time without saving money on hard items (section 3.2).
-4. **Terra's rung, the Codex factors and the writer ceiling** rest on indirect evidence and are labelled initial recommendations to evaluate.
-5. **Decisive-line checking can be gamed** by a check that prints a fixed line without exercising the criterion. Validators are told to reject vacuous checks and tier D adds a reviewer, but the script cannot detect a well-formed vacuous check.
+4. **The expensive rung** (one take at `high`, on both hosts, for every kind of task), Terra's place in it and the Codex factors rest on aggregate leaderboard order, not on measured rescue rates after a cheap failure, and Zapier's tool-use rows order Sonnet's efforts the other way. They are initial choices to evaluate.
+5. **A check can still be irrelevant.** The script rejects a PASS that exits non-zero, fixed-text commands and checks that cannot start, and a plan check binds a criterion; but where the plan names no check, a criterion rests on a check the validator chose, and the script cannot tell whether a real-looking command exercises the criterion. The report lists those criteria under `Check basis` instead of calling them verified without qualification.
 6. **Weak coordinators** have been designed for but not observed: see section 13.
 7. **A scope rejection fails every item of its batch**, because the scope check cannot tell which worker strayed.
 
@@ -208,3 +208,24 @@ One conflict: OpenAI's guidance says to avoid tests that "merely match generated
 - One live run outside the eval harness: the tier B fixture with real `haiku`/`low` workers under a Fable coordinator. Three produce items and one validator, four calls, every first take accepted after the script re-ran the checks, 4 of 24 units, eleven coordinator tool calls, worker replies of four to six lines. The `low` validator made a stray workspace edit and reverted it; the scope check confirmed no change. One run, one coordinator model: an existence proof, not a measurement.
 - Codex: nothing was run. Identifiers come from the installed client's catalogue and tool descriptions.
 - Two independent reviews (requirements, and drift between hosts) were run on the finished branch; their findings are fixed in this release, with regression tests in `test/ledger.test.mjs`.
+- A third, external review reproduced failures in acceptance, the validator roster, the gate, command execution, secret handling, ownership, snapshot freshness and admission. Section 14 lists what changed. Those changes have deterministic tests only: no live run has exercised them, and the live run above predates them.
+
+## 14. Changes after the external review
+
+| Finding | Change |
+|---|---|
+| A PASS could be accepted on a non-zero exit, on `echo`, or with a required check not run | PASS requires exit 0; fixed-text and unstartable checks are rejected; a validator's `NOT_RUN` blocks acceptance; the report names criteria that passed only on a worker-chosen check |
+| Tier D could finish on one validator | Acceptance needs every required validator with a supported PASS on the same frozen state; they may run sequentially; the state must be unchanged when each starts |
+| The gate accepted the failing worker's own file and any failing command; a second expensive take was reachable | Diagnosis only from a separate finished map item that ran after the failure; reproduction only with one of the item's own checks; one expensive take, consumed at dispatch, never re-opened |
+| The script executed worker commands that could change external systems | Refused before execution; infra runs execute external CLIs only when fixed in the plan; every executed command is logged; plan checks are screened too |
+| A detected secret was printed | Refused in plan lines and answers; withheld from everything the script prints or writes to briefs, log and report |
+| Globs that intersect ran together | Intersection test with conservative serialisation; `locks:` for shared resources |
+| Between-batch changes were only noted; a repeated report was stale | Dispatch blocks until the change is accepted (`drift`), then validation runs again; every report re-snapshots, and a change after validation makes the outcome INVALID |
+| Stopped items kept reservations; host slots overwrote a rate limit | Reservations freed; host slots, declared limit and throttle stored apart, smallest wins |
+| Known pinning mismatches ran as best effort | Dispatch stops until the user accepts; relaxed runs are labelled |
+| Omission retried at the same effort; fixed writer ceiling | Both removed |
+| Resume lacked worker bindings | `--worker` stores the id; reports end with the reply block; `reconcile` records finished workers from disk and names lost ones |
+| The `low`-start cost argument used the wrong probability | Corrected (section 3.2) |
+| Publisher-level independence claims | Experiment-level notes in the source index |
+
+Not changed, and why: the expensive rung stays on by default, because the task requires a gated second model and choosing one option; the review's proposal to make it opt-in until per-kind rescue rates are measured is a policy decision for the maintainer. A constrained command runner for cloud audits was not built; the screen and the read-only-identity advice stand in for it. No live compaction, weak-coordinator or Codex run was made.

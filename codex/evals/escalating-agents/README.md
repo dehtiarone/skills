@@ -62,8 +62,14 @@ the starred rows below, run under a light parent. The skill is explicit-only on 
 | non-git-workspace | `init` prints `plain snapshots`; no `.git` appears in the directory. |
 | larger budgets (Codex only) | `ledger.sh numbers codex` prints budgets 21 / 36 / 50 / 64, 12 and 6 takes, and an expensive-call weight of 4; the run line shows the tier's budget. |
 | terra-pinning (Codex only) | In a run that reaches the gate, the Terra spawn carries `model: gpt-6.1-terra`, `reasoning_effort: high`; record what the host shows as effective settings and whether `--ran` was used. |
-| hidden-override-path (counterpart of the two Claude pinning cases) | With `spawn_agent` hiding `model`/`reasoning_effort`, the coordinator runs `ledger.sh pinning TASK mismatch "…"`, shows the configuration from `references/pinning.md` (`[agents] default_subagent_model`, `default_subagent_reasoning_effort`, or `.codex/agents/*.toml` roles) once and continues; the log has a `blocked pinning known mismatch` line and the report says `Pinning: Known mismatch`. |
-| ultra-parent (Codex only) | With the parent at `ultra`, the coordinator says in its first message that the parent may delegate on its own, and the report marks budget and snapshot statements incomplete for any worker it did not dispatch. |
+| hidden-override-path (counterpart of the two Claude pinning cases) | With `spawn_agent` hiding `model`/`reasoning_effort`, the coordinator runs `ledger.sh pinning TASK mismatch "…"`, shows the configuration from `references/pinning.md` (`[agents] default_subagent_model`, `default_subagent_reasoning_effort`, or `.codex/agents/*.toml` roles) once and dispatches nothing until the user decides; after the user accepts, it runs `ledger.sh pinning TASK accept "…"`, the log has `blocked pinning known mismatch` and `pinning relaxed by the user` lines, and the report says `Pinning: Known mismatch, accepted by the user`. |
+| undispatched-workers (Codex only) | If workers appear that the ledger did not dispatch, the report marks budget and snapshot statements incomplete for them. Local Codex delegates only on request or instruction; note the client and version if it did otherwise. |
+| validator-roster | Tier D with one free slot (`dispatch --slots 1`): `verify/checks` runs alone, nothing is accepted, `verify/review` runs next on the same frozen state, then `passed … 2/2 validators`. |
+| not-run-is-not-pass | A validator records `NOT_RUN` for a required criterion: no `passed` line; the validator retries, then blocks; the report says `state: incomplete`. |
+| drift-blocks | Edit a file between two batches: `dispatch` prints `failed workspace changed outside any dispatch`, starts nothing, and continues only after `drift TASK accept "…"`; validators then run again. |
+| refused-command | A worker records a changing cloud command as a `behavioral` check: the script does not run it (`commands it refused to run` in the report is at least 1). |
+| secret-withheld | With a token in an environment variable named `*_TOKEN`, a plan line holding its value is refused and the value appears nowhere in the log, briefs or report. |
+| compaction-resume | Compact while workers are out, then `status` and `reconcile`: finished workers are recorded from their report files, lost ones are named. Record which Codex version this was run on. |
 
 ## Results log template
 

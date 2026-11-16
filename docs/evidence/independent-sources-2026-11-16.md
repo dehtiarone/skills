@@ -58,7 +58,7 @@ This index lists every source behind a performance, cost or escalation decision 
 
 ## 5. Zapier, AutomationBench 1.0.6
 
-- Publisher and check: Zapier (<https://zapier.com/benchmarks>, arXiv 2604.18934); independent of both vendors.
+- Publisher and check: Zapier (<https://zapier.com/benchmarks>, arXiv 2604.18934); not published, run or funded by either vendor, but the paper acknowledges early feedback from Anthropic and OpenAI, so its design is not provably untouched by them. Its Sonnet rows order `low` and `medium` above Haiku `high`, the opposite of the coding sources.
 - Task kind: agentic tool use. Rows (`low` / `medium` / `high`): Haiku 6.09 / 8.52 / 10.5%; Luna 1.22 / 9.44 / 14.46%; Sonnet `low` 18.26%, `medium` 23.29%. No Terra row.
 - Reading: on tool use Sonnet at `low` beats Haiku at every effort, the opposite of the coding result.
 
@@ -78,14 +78,14 @@ This index lists every source behind a performance, cost or escalation decision 
 
 | Source | Check | Finding used |
 |---|---|---|
-| Dekoninck, Baader, Vechev, "A Unified Approach to Routing and Cascading for LLMs", arXiv 2410.10347 (ETH Zurich) | Independent | A cascade pays only with a good after-the-fact quality signal; up-front routing did not work on SWE-Bench |
+| Dekoninck, Baader, Vechev, "A Unified Approach to Routing and Cascading for LLMs", arXiv 2410.10347 (ETH Zurich) | Authors independent; the theory and the non-SWE experiments stand; **the SWE-Bench routing result (appendix) uses the Verified subset and is excluded** | A cascade pays only with a good after-the-fact quality signal; up-front routing did not work on SWE-Bench |
 | Chen, Zaharia, Zou, "FrugalGPT", arXiv 2305.05176 (Stanford) | Independent | Cheap-first cascades match strong-model quality at lower cost when a scorer decides escalation |
-| Stroebl, Kapoor, Narayanan, "The Limits of Inference Scaling Through Resampling", arXiv 2411.17501 (Princeton) | Independent | Retrying against an imperfect check has a ceiling set by the check's false-positive rate; few retries are optimal |
+| Stroebl, Kapoor, Narayanan, "The Limits of Inference Scaling Through Resampling", arXiv 2411.17501 (Princeton) | Authors independent; the theory and the MBPP+ results stand; its HumanEval+ results derive from an OpenAI dataset and are not relied on | Retrying against an imperfect check has a ceiling set by the check's false-positive rate; few retries are optimal |
 | Adnan, Kuhn, "The Debugging Decay Index", arXiv 2506.18403 | Independent | Repair effectiveness drops 60–80 % within two or three attempts |
 | Chen et al., "Model Cascading for Code", arXiv 2405.15842 (NYU) | Independent | Cascading wastes money when the cheap model is very weak on the task or the tasks are hard |
 | Gandhi et al., "Strong-Weak Model Collaboration for Repo-level Code Generation", arXiv 2505.20182 (CMU) | Independent | Weak-first wins at low budgets, strong-first at higher ones |
-| Son et al., "SWE-Router", arXiv 2607.00053 (UCL) | Independent | The strong model is restarted from the original task, not from the weak model's trajectory |
-| Ganz et al., "The Handoff Tax", arXiv 2608.24358 | All authors at AWS; not Anthropic or OpenAI | Continuing a cheap trajectory with a strong model was dominated by a fresh strong run |
+| Son et al., "SWE-Router", arXiv 2607.00053 (UCL) | Authors independent; **results measured on SWE-bench Verified (OpenAI-curated): excluded as evidence, kept as a design idea only** | The strong model is restarted from the original task, not from the weak model's trajectory |
+| Ganz et al., "The Handoff Tax", arXiv 2608.24358 | All authors at AWS; **primary coding study on SWE-bench Verified: excluded as evidence, kept as a design idea only** | Continuing a cheap trajectory with a strong model was dominated by a fresh strong run |
 | Kim et al., "Correlated Errors in Large Language Models", arXiv 2506.07962; Goel et al., arXiv 2502.04313 | Independent | Models tend to be wrong together, so a stronger model rescues only part of what a weaker one fails |
 | Sun et al., "What Effort Level Should I Choose?", arXiv 2610.34491 | Together AI; not Anthropic or OpenAI; simulated | Starting at the lowest effort and retrying higher after a failed check matched or beat a fixed top effort, with median savings of 15–41 %, given a reliable verifier |
 | Yang et al., "Ares", arXiv 2603.07915 (UCSB, Accenture) | Independent | `medium` captures most of `high`'s gain at far fewer reasoning tokens; `low` collapses on some tasks |
@@ -93,17 +93,19 @@ This index lists every source behind a performance, cost or escalation decision 
 
 No study tests a three-level effort ladder followed by a model change; the ladder is an initial recommendation to evaluate.
 
+With the excluded results removed, the rule "start the stronger model fresh from the task" has no eligible measurement behind it; it is kept as a design choice. No eligible source measures how often the stronger model rescues an item the cheaper one failed, for any of the four models or any task kind, so the choice of one expensive rung at `high` follows from aggregate ordering only.
+
 ## 9. Research on parallel orchestration and verification
 
 | Source | Check | Finding used |
 |---|---|---|
-| Geng, Neubig, "Effective Strategies for Asynchronous Software Engineering Agents" (CAID), arXiv 2603.21489 (CMU) | Independent | Results improved from 2 to 4 parallel engineers and fell at 8 on one benchmark, with little gain beyond 2 on another; cost rose and runtime did not fall |
+| Geng, Neubig, "Effective Strategies for Asynchronous Software Engineering Agents" (CAID), arXiv 2603.21489 (CMU) | Authors independent; only the Commit0 trend is used; **its PaperBench results are on an OpenAI benchmark and excluded**. Its engineers work in isolated git worktrees and merge, not in shared files | Results improved from 2 to 4 parallel engineers and fell at 8 on one benchmark, with little gain beyond 2 on another; cost rose and runtime did not fall |
 | Cemri et al., "Why Do Multi-Agent LLM Systems Fail?" (MAST), arXiv 2503.13657 (UC Berkeley) | Independent; funding statement not found | A failure taxonomy: step repetition is the largest single mode and verification failures total about a quarter |
 | Xu, Subramanian, Karthik, "AI Agent Pull Requests on GitHub", arXiv 2607.04697 | Independent | Co-active agent pull-request pairs conflict 19.8–41.7 % of the time |
 | Cho, Lee, "AgentRoom", arXiv 2608.23740 | Independent | Judged quality peaked at two agents and declined at three and four |
 | Sinha et al., "The Illusion of Diminishing Returns", arXiv 2509.09677 | Independent | Per-step accuracy falls with the number of steps, and earlier errors in context make it worse |
 | Lu et al., "AgentRewardBench", arXiv 2504.08942 | Independent of both vendors | No LLM judge exceeded 70 % precision on agent trajectories |
-| Wang et al., "SWE-Review", arXiv 2607.06065 | Huawei authors; not Anthropic or OpenAI | LLM reviewers falsely approved about a fifth of a strong generator's patches, mostly citing passing tests |
+| Wang et al., "SWE-Review", arXiv 2607.06065 | Huawei authors; **dataset built from SWE-bench Verified issues: figures excluded** | LLM reviewers falsely approved about a fifth of a strong generator's patches, mostly citing passing tests |
 | Rawat, Flek, "Plausible but Wrong", arXiv 2604.25345; Beel et al., arXiv 2502.14297 | Independent | Silent wrong numbers are the dominant failure in agent-run scientific and data workflows |
 | Onweller et al., "Cited but Not Verified", arXiv 2605.06635 | PwC authors; not Anthropic or OpenAI | Deep-research citations resolve more than 94 % of the time, but the cited claim is supported only 39–77 % of the time |
 
@@ -123,10 +125,10 @@ No study gives a cap for read-only fan-out, and none compares no-progress detect
 | Terminal-Bench 4.1 official leaderboard | Its leaderboard experiments are supported by grants from OpenAI and Anthropic |
 | Epoch AI, Epoch Capabilities Index | Paid work for OpenAI and Anthropic listed on its funding page |
 | GDPval-AA (Artificial Analysis) | Built on an OpenAI dataset |
-| SWE-bench Verified figures | Subset curated by OpenAI |
+| SWE-bench Verified figures, including those inside otherwise independent papers (marked in sections 8 and 9) | Subset curated by OpenAI |
 | Kapoor et al., Holistic Agent Leaderboard, arXiv 2510.11977 | OpenAI API credits acknowledged |
 | Li et al., "The Silent Failures in Agentic Data Science", arXiv 2610.14115 | OpenAI compute credits acknowledged |
-| Olausson et al., "Is Self-Repair a Silver Bullet for Code Generation?", arXiv 2306.09896 | Microsoft Research co-authors; treated as unclear and not relied on |
+| Olausson et al., "Is Self-Repair a Silver Bullet for Code Generation?", arXiv 2306.09896 | Microsoft Research co-authors. Microsoft is not one of the two excluded vendors; left out as a precaution, not because an OpenAI affiliation was shown |
 | Scale SEAL SWE Atlas v1.1 | Effort not stated; ownership not verified; judged by an OpenAI model |
 | Vendor model cards, launch posts and vendor-reported scores | Vendor material |
 | METR time horizons, Aider Polyglot, swebench.com, Princeton HAL pages, OSWorld, tau-bench, DABstep | No rows for these four models |
@@ -139,3 +141,7 @@ No study gives a cap for read-only fan-out, and none compares no-progress detect
 - Any independent research or retrieval benchmark that reports these models per effort level.
 - Measured wall-clock below `max`, other than Hex's latency column.
 - Run-to-run variance for the pass-rate metrics.
+
+## How to read the "Check" column
+
+"Independent" means that no publishing, running, funding or curating role of Anthropic or OpenAI was found in the affiliations, acknowledgements and methods that were read on the retrieval date. It is not proof of financial independence, and it is a statement about the publisher: a paper can be independent and still contain an experiment on a vendor-curated dataset. Where that is known, the row says which experiment is excluded. Using an Anthropic or OpenAI model as a judge is noted where known and is not treated as vendor involvement. Hex's DataBench has no Sonnet `high` row, and LiveBench and Vals rows are not per-effort, so none of them can calibrate the expensive rung.
