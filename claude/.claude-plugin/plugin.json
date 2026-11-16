@@ -1,7 +1,7 @@
 {
   "name": "dehtiarone-skills",
-  "description": "Orchestration skills for Claude Code: escalating-subagents and cheap-parallel-agents. The manifest exists so `claude plugin eval ./claude` can run the eval suite under claude/evals/.",
-  "version": "1.2.0",
+  "description": "Orchestration skill for Claude Code: escalating-agents. The manifest exists so `claude plugin eval ./claude` can run the eval suite under claude/evals/.",
+  "version": "2.0.0",
   "author": { "name": "dehtiarone" },
   "repository": "https://github.com/dehtiarone/skills",
   "license": "MIT"

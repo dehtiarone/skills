@@ -1,2 +1,2 @@
-# LF everywhere: CRLF would change SKILL.md bytes and break the pinned script SHA-256.
+# LF everywhere: CRLF would break the Bash scripts and the byte-identity of the two host variants.
 * text=auto eol=lf
