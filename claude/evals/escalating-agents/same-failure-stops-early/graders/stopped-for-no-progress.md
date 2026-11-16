@@ -1,5 +1,5 @@
 ---
 type: regex
 target: trace
-pattern: 'no progress: same failure'
+pattern: 'stopped +produce/[a-z0-9-]+ [^\n"]*?no progress'
 ---

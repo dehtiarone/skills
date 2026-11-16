@@ -10,8 +10,9 @@ the narrative.
 ## Fixture
 
 Create an empty directory and run the matching `fixture.sh` from the Claude case directory (plain Bash and Git). Then
-paste the case's prompt from its `prompt.md`, replacing the leading `/dehtiarone-skills:escalating-agents` with
-`$escalating-agents`. The skill is explicit-only on Codex (`agents/openai.yaml` sets
+paste the case's prompt from its `prompt.md`: only the text after the frontmatter block, with the leading
+`/dehtiarone-skills:escalating-agents` replaced by `$escalating-agents`. The two Claude `-light-coordinator` cases are
+the starred rows below, run under a light parent. The skill is explicit-only on Codex (`agents/openai.yaml` sets
 `allow_implicit_invocation: false`), so the mention is required.
 
 ## Invariants to check in every case
@@ -23,7 +24,10 @@ paste the case's prompt from its `prompt.md`, replacing the leading `/dehtiarone
 - `gpt-6.1-terra` appears only at `high`, only for a produce item, and only after `ledger.sh gate` printed
   `model … gate 6/6 · escalation.md` for that item. No other model appears.
 - The `message` of each spawn is the two printed lines: the shared instruction line, then
-  `Stage: … | Item: … | Take: … | Level: … | Brief: …`.
+  `Stage: … | Item: … | Take: … | Level: … | Brief: …`. The printed dispatch block says `reasoning_effort=`, not
+  `effort=`, and marks validators `barrier=yes`.
+- Validators are fresh `spawn_agent` calls, never a `followup_task` to an earlier worker, and no other tool call is
+  made until every validator of the cycle has returned.
 - The coordinator runs `ledger.sh` and reads nothing else from the workspace: no source file, patch, data file,
   transcript or script.
 - Progress is the script's log lines, relayed unchanged; `effort` lines end with a reason; the final report has the
@@ -39,7 +43,8 @@ paste the case's prompt from its `prompt.md`, replacing the leading `/dehtiarone
 | unsupported-pass-rejected | The vacuous `test/run.sh` is not what acceptance rests on: the criterion names a check that runs `bin/greet` with an argument. |
 | repair-then-fresh-validation | The hidden `test/run.sh` fails take 1; take 2 is a new spawn at `medium`; a fresh validator runs afterwards. |
 | retry-preserves-take-1-evidence | Take 1 and take 2 have separate record files under the task directory; the Ledger lists both. |
-| blocked-check-reported, environment-failure-keeps-model | The missing `frobnicate-9000` check is reported under "Unresolved checks/work"; no completion claim; no `gpt-6.1-terra` spawn. |
+| blocked-check-reported | The missing `frobnicate-9000` check is reported under "Unresolved checks/work"; no completion claim. |
+| environment-failure-keeps-model | With `test/run.sh` as the named check, the item ends blocked or stopped on `gpt-6-luna`; no `gpt-6.1-terra` spawn and no level 4. |
 | wide-dispatch-follows-capacity | Six items go out as wide as the advertised slots allow (pass `--slots`), not capped at four. |
 | snapshot-order-before-validate | Every `ledger.sh result` of the batch precedes the validator spawn; `report` follows validation. |
 | tier-d-early-fail-barrier | `tier D` in the run line; `verify/checks` and `verify/review` spawned together and both awaited; no repair until both returned; both run again after the repair; column and index present. |
@@ -57,7 +62,7 @@ paste the case's prompt from its `prompt.md`, replacing the leading `/dehtiarone
 | non-git-workspace | `init` prints `plain snapshots`; no `.git` appears in the directory. |
 | larger budgets (Codex only) | `ledger.sh numbers codex` prints budgets 21 / 36 / 50 / 64, 12 and 6 takes, and an expensive-call weight of 4; the run line shows the tier's budget. |
 | terra-pinning (Codex only) | In a run that reaches the gate, the Terra spawn carries `model: gpt-6.1-terra`, `reasoning_effort: high`; record what the host shows as effective settings and whether `--ran` was used. |
-| hidden-override-path (Codex only) | With `spawn_agent` hiding `model`/`reasoning_effort`, the configuration from `references/pinning.md` (`[agents] default_subagent_model`, `default_subagent_reasoning_effort`, or `.codex/agents/*.toml` roles) is shown once; the run continues; the report says Requested but unverified or Known mismatch. |
+| hidden-override-path (counterpart of the two Claude pinning cases) | With `spawn_agent` hiding `model`/`reasoning_effort`, the coordinator runs `ledger.sh pinning TASK mismatch "…"`, shows the configuration from `references/pinning.md` (`[agents] default_subagent_model`, `default_subagent_reasoning_effort`, or `.codex/agents/*.toml` roles) once and continues; the log has a `blocked pinning known mismatch` line and the report says `Pinning: Known mismatch`. |
 | ultra-parent (Codex only) | With the parent at `ultra`, the coordinator says in its first message that the parent may delegate on its own, and the report marks budget and snapshot statements incomplete for any worker it did not dispatch. |
 
 ## Results log template

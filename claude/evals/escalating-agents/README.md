@@ -59,7 +59,7 @@ case scores 0.
 | `no-complexity-guessing` | A trivial and a hard item both start `haiku`/`low` |
 | `effort-first-escalation` | A seeded shortfall moves the item to `haiku`/`medium`, with no model change |
 | `environment-failure-keeps-model` | A missing tool never raises the model |
-| `model-gate-honoured` | A check that never says what it wants: any `sonnet` dispatch must follow a passed gate; otherwise the item ends honestly unresolved |
+| `model-gate-honoured` | A check that never says what it wants: the item ends at the gate, blocked or stopped; any `sonnet` dispatch must follow a passed gate; a gate result prints the six conditions it checked; the report claims nothing it has not verified |
 | `coordinator-context-discipline` | An unknown cause is scoped by a map worker; the coordinator reads no source, patch, transcript or script |
 | `small-item-decomposition` | Four independent behaviours become four parallel items |
 | `resume-from-status` | The coordinator restores its state with `ledger.sh status` |
@@ -71,12 +71,14 @@ case scores 0.
 | `tier-b-light-coordinator`, `tier-d-light-coordinator` | The tier B and tier D cases with the coordinator pinned to Haiku |
 | `unavailable-pinning-effort-env`, `known-mismatch-haiku-alias` | An effort or alias override is disclosed and reported as Known mismatch |
 
-Every case also carries 21 common graders, the skill's invariants: every first attempt is `haiku`/`low`; no dispatch
+Every case also carries 23 common graders, the skill's invariants: every first attempt is `haiku`/`low`; no dispatch
 above `high` or below `low`, or without a pinned model and effort; no `sonnet` first attempt; a `sonnet` dispatch uses
-`high` and follows a passed gate for the same item; workers are `general-purpose`; validators are neither backgrounded
-nor continued by message; the progress log has the documented format, every `effort` line has a reason and every
-`model` line a passed gate; the final report has its fields; and the coordinator reads only run files and references,
-searches nothing and does not read the scripts.
+`high`, carries the level 4 header and follows a passed gate for the same item; workers are `general-purpose`;
+validators are neither backgrounded nor continued by message; the progress log has the documented format, every
+`effort` line has a reason and every `model` line a passed gate; the final report has its fields; and the coordinator
+reads only run files and references, searches nothing, reads nothing through the shell and does not read the scripts.
+That nothing is dispatched while a validator is out is enforced by the script itself (`dispatch` refuses while a batch
+is open) and covered by `test/ledger.test.mjs`.
 
 Migration from the 1.x suite: nine case names are unchanged in meaning; `retry-preserves-attempt-1-evidence` became
 `retry-preserves-take-1-evidence`, `budget-exhaustion-reports` became `blocked-check-reported`,
@@ -115,10 +117,16 @@ and `workers-are-haiku` are replaced by the common graders above; `coordinator-r
 - `several-failures-then-pass` reveals one requirement per failure: three failures before the item can pass.
 - `same-failure-stops-early` prints the same failure whatever is changed.
 - `model-gate-honoured` reports only how far the output is from the target. A model escalation is possible but not
-  forced; the graders are invariants (no expensive dispatch without a passed gate, an honest report), not a script.
+  forced; the graders are invariants (no expensive dispatch without a passed gate, printed gate conditions, an honest
+  report, the hidden text not leaked), not a script. What `escalation.md` cites, and that each condition can fail, is
+  established by `test/ledger.test.mjs`.
+- `environment-failure-keeps-model` seeds the environment half of "omission or environment never escalates the
+  model". An omission cannot be seeded reliably in a live run; that an `omission` class is refused at the gate and
+  gets one same-level retry is established by `test/ledger.test.mjs`.
 - `unsupported-pass-rejected` cannot force a validator to record the vacuous suite. That a vacuous, unexecuted or
   too-weak record is rejected and moves the validator up one level is established deterministically by
-  `test/ledger.test.mjs`; the eval checks that acceptance ends up resting on a real check.
+  `test/ledger.test.mjs`; the eval checks that the plan fixes a real check, that acceptance rests on it, and that any
+  rejected validator record in the trace is followed by that validator's step up.
 - `resume-from-status` does not compact the context (the runner cannot); it tells the coordinator to treat its memory
   as unreliable and grades that state is restored with `status` before dispatching.
 
@@ -132,6 +140,10 @@ Each run is a `claude -p` child with its own temporary home, so the `claude` bin
 scores 0 with `Not logged in` on every paid grader. Keep traces (`--keep-temp`) and check three assumptions before
 trusting the cross-line and main-thread graders: that the `/dehtiarone-skills:escalating-agents` prefix expands, that
 the trace has one content block per assistant line, and that subagent events carry a non-null `parent_tool_use_id`.
+
+**Status for 2.0.0: no scored run has been recorded.** The suite loads and every grader is exercised by
+`node --test`, but `claude plugin eval` itself has not been run against this version (the authoring machine's CLI was
+not logged in). The first scored run must also check the three assumptions above.
 
 Results land in `claude/evals/results/` (git-ignored). Record the Claude Code version (`claude --version`), the
 coordinator model, the run date, and from the kept traces the coordinator's turns, its peak context, and whether a
