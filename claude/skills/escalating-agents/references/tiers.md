@@ -17,6 +17,6 @@ Tier D never starts stronger: every first attempt is still the cheap model at `l
 
 1. Map first, always. Ask map items for the constraints that apply: production-data rules, authorisations, rate limits, what must not change.
 2. Give every claim about behaviour, data or findings an executed evidence type (`behavioral`, `recompute`, `reconciliation`, `schema`, `command-output`). Use `inspection` or `source` only where nothing can be executed.
-3. Verification runs two validators together: `verify/checks` re-establishes every criterion with checks of its own, and `verify/review` reads the integrated patch line by line (criterion `R1`). Nothing is repaired or dispatched until both have returned, and after any repair both run again, fresh.
+3. Verification needs two validators: `verify/checks` re-establishes every criterion with checks of its own, and `verify/review` reads the integrated patch line by line (criterion `R1`). They run together when two slots are free and one after the other when not; either way the script accepts only when both have a supported PASS on the same frozen state, and it refuses to start a validator if the workspace changed since that state was frozen. After any repair both run again, fresh.
 4. You do not read the patch yourself. If the two validators disagree, plan a `map` item that reads both records and the patch and reports which is right, with evidence.
 5. State external side effects in the report (`--external`). Snapshots cannot see them.

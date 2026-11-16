@@ -1,24 +1,25 @@
 # Final report
 
-`LEDGER report TASK` captures the final snapshot, scans the run files for secrets and for commands that may change external systems, writes `TASK/report.md` and prints it. Relay it as your final message. Pass `--external "<what was actually done>"` for commits, pushes, deployments or authorised external changes, and `--usage "<measured tokens or cost>"` when the host exposes them.
+`LEDGER report TASK` captures a fresh snapshot of the workspace every time it runs, compares it with the validated state, scans the run files for secrets and for commands that may change external systems, writes `TASK/report.md` and prints it. Relay it as your final message. Pass `--external "<what was actually done>"` for commits, pushes, deployments or authorised external changes, and `--usage "<measured tokens or cost>"` when the host exposes them.
 
 ```text
 Tier: [A/B/C/D, and the tier it was promoted from]
 Kind: [code/infra/data]
 Coordinator: [parent model/effort as given to init]
-Outcome: [items accepted, unresolved, units used of budget]
+Outcome: [items accepted, unresolved, units used of budget; state: complete, incomplete (why), or INVALID when the workspace changed after validation]
 Ledger: [stage/item | take | level | requested | ran | batch | elapsed | outcome | class | failure | units]
-Pinning: [Verified / Requested but unverified / Known mismatch with cause; calls that ran on other settings]
+Pinning: [Verified / Requested but unverified / Known mismatch with cause, and the user's words if they accepted it; calls that ran on other settings]
 Parallelism: [batches | peak concurrent | elapsed per batch | no savings claim without a serial baseline]
 Effort distribution (requested): [cheap low / medium / high; expensive]
 Escalations: [effort steps; model steps, each with its escalation.md]
-Verified: [criterion | result | evidence type | who verified it on which snapshot]
+Verified: [criterion | result | evidence type | who verified it on which snapshot | check fixed by plan or worker]
+Check basis: [criteria that passed only on a check a worker chose]
 Choices: [decisions]
-Unresolved checks/work: [items stopped or unverified, checks not run, or none]
-Workspace: [validated snapshot; changes after validation; changes between batches outside any dispatch]
-External actions: [as reported; count of possibly changing commands found by the scan]
+Unresolved checks/work: [items stopped or unverified, or none]
+Workspace: [validated snapshot; changes after validation; accepted changes outside any dispatch; files the script's check re-runs wrote]
+External actions: [as reported; commands the script ran, refused to run, and flagged in worker records]
 Not covered by snapshots: external systems, ignored files
-Secrets: [none found, or the files to redact; values are never printed]
+Secrets: [none detected, or the files that hold one; values are withheld; detection is not a guarantee]
 Usage: [measured, or unavailable]
 Post-acceptance defects: not assessed
 Run files: [TASK]
@@ -30,3 +31,4 @@ Rules for what you add around it:
 - Make no time or cost savings claim without a measured serial baseline.
 - Report actual external actions, not what was authorised.
 - If `Secrets` lists files, tell the user before sharing anything from `TASK`.
+- `state: complete` is the only success. Relay `incomplete` and `INVALID` as they are; a criterion listed under `Check basis` is verified only as far as a worker-chosen check goes, so say that when you summarise.

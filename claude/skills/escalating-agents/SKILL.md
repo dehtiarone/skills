@@ -26,7 +26,7 @@ This skill runs only when the user invokes it by name. You are the coordinator: 
 4. **You delegate reading as well as writing.** Do not open source files, data, logs, worker transcripts, full patches or brief templates. Read only script output, worker replies (10 lines at most) and the report section a `next:` line points you to. To learn something about the workspace, plan a `map` item.
 5. **Workers never** commit, push, deploy, delegate, or run the scripts. Outside the workspace everything is read-only unless the user authorised that exact action (`allow` plan line). Credentials, tokens and secrets never appear in a brief, a reply, evidence or the report.
 6. Never reset, stash, clean or revert work you did not dispatch. In Plan mode dispatch nothing that writes.
-7. **State lives in `TASK`, not in your memory.** After a compaction, an interruption or any doubt, run `LEDGER status TASK` and continue from its `next:` line.
+7. **State lives in `TASK`, not in your memory.** After a compaction, an interruption or any doubt, run `LEDGER status TASK` and continue from its `next:` line; if workers were out and you no longer hold them, it tells you to run `LEDGER reconcile TASK`.
 
 ## Run loop
 
@@ -36,22 +36,24 @@ This skill runs only when the user invokes it by name. You are the coordinator: 
 2. **Plan.** One `plan` call, repeated whenever items are added:
    ```text
    LEDGER plan TASK <<'EOF'
-   request <the user's request, verbatim>
+   request <the user's request, verbatim; one `request` line per line of it>
    criterion C1 behavioral | <what must be true when done> | check: <command, if the request names one> | expect: <text its output must contain>
    decision <a name, interface or convention every worker must share>
    allow <an external change the user explicitly authorised>
    item map <slug> | <one question to answer>
-   item produce <slug> | <one behaviour to produce> | owns: <globs> | criteria: C1 | after: <slug>
+   item produce <slug> | <one behaviour to produce> | owns: <globs> | criteria: C1 | after: <slug> | locks: <name>
    EOF
    ```
    - In tier C or D, or whenever you would have to read files to plan, plan only `map` items first. Their replies and the `## Plan lines` section of their reports give you the produce items.
    - **Sizing rule:** one behaviour per item; one criterion per item, two at most; owned outputs disjoint from every other item; small enough for one sitting (about five files, one data source, or one account and region). Prefer more, smaller items; merge only when `dispatch` says an item is not admitted.
+   - Give a criterion its `check:` whenever the request or a map report names a command. Without one it can pass only on a check a worker chose, and the report says so. Never write a secret's value into a plan line; name its variable.
+   - Items that share a database, port, cache or generated file get the same `locks: <name>`; they then never run side by side.
    - A slug is 20 characters at most and names the purpose (`fix-parser`, not `item-3`). Validators are added for you.
 3. **Loop until a `next:` line says `report`:**
    1. `LEDGER dispatch TASK`. It admits the widest safe batch, snapshots the workspace, writes the briefs and prints one `dispatch` block per worker.
    2. Start every printed worker in one message, as "Dispatch" below says.
-   3. For each reply: `LEDGER result TASK <stage/slug> <outcome> [--class <class>] [--sig "<signature>"]`, copying `outcome`, `class` and `signature` from the reply. A missing or malformed reply is `UNUSABLE`. The script re-runs the recorded checks itself; a worker's word is never the evidence.
-   4. Do what each `next:` line says, with the command it prints: `dispatch`; `narrow` (restate the one failing criterion with decisions pre-made); `gate`; a blocked item (ask the user, then `answer`); out-of-scope files (`scope`). If a line needs a fact you do not have, plan a `map` item to get it. `references/triage.md` explains each case; read it the first time one appears.
+   3. For each reply: `LEDGER result TASK <stage/slug> <outcome> [--class <class>] [--sig "<signature>"] [--worker <its id>]`, copying `outcome`, `class` and `signature` from the reply. A missing or malformed reply is `UNUSABLE`. The script re-runs the recorded checks itself; a worker's word is never the evidence.
+   4. Do what each `next:` line says, with the command it prints: `dispatch`; `narrow` (restate the one failing criterion with decisions pre-made); `gate`; a blocked item (ask the user, then `answer`); out-of-scope files (`scope`); files changed outside any dispatch (`drift`); a pinning mismatch (ask the user). If a line needs a fact you do not have, plan a `map` item to get it. `references/triage.md` explains each case; read it the first time one appears.
 4. **Report.** `LEDGER report TASK [--external "<external actions actually taken>"] [--usage "<measured tokens or cost>"]`, then relay what it prints as your final message.
 
 ## Tiers: choose by consequence, first matching row from the top
@@ -83,15 +85,15 @@ Validators and map items stop at level 3. Environment, throttling, omission and 
 | C    | 30             | 8                      | 4                            |
 | D    | 36             | 8                      | 4                            |
 
-A cheap call costs 1 unit and a level 4 call 8. The budget is a cap, not a target; the script does the arithmetic and keeps a reserve for one repair and its revalidation (`references/budgets.md`). Batch width is the smallest of: eligible items, the host's free slots, 6 writers, and what the budget admits.
+A cheap call costs 1 unit and a level 4 call 8. The budget is a cap, not a target; the script does the arithmetic and keeps a reserve for one repair and its revalidation (`references/budgets.md`). Batch width is the smallest of: eligible items, the host's free slots, a `limit` or `writers` line in the plan, and what the budget admits. There is no other ceiling.
 
 ## Dispatch (Claude Code)
 
-For each `dispatch` block make one `Agent` call with `subagent_type: "general-purpose"`, `model` and `effort` exactly as printed, and the two indented lines as the whole `prompt`. Put the batch's calls in one message. Never use `subagent_type: "fork"` (it inherits your model and context) or `Explore` (it cannot write its report file). Blocks that say `barrier=yes` are validators: start them together and make no other tool call until every one of them has returned, so a verification cycle returns whole; never set `run_in_background` for them. `continue=same-worker` means: send the two lines to that worker with `SendMessage` instead of a new call. On `Concurrent subagent limit reached`, run `LEDGER defer TASK <the refused items>`. If the host shows the model or effort a worker really ran on, add `--ran <model>/<effort>` to its `result`. If `init` reports a pinning mismatch, or a call hides or rejects `model` or `effort`, read `references/pinning.md`.
+For each `dispatch` block make one `Agent` call with `subagent_type: "general-purpose"`, `model` and `effort` exactly as printed, and the two indented lines as the whole `prompt`. Put the batch's calls in one message. Never use `subagent_type: "fork"` (it inherits your model and context) or `Explore` (it cannot write its report file). Wait for every worker of the batch before recording results; where the host runs agents in the background, that means waiting for each completion notice. Blocks that say `barrier=yes` are validators: until each of them has returned, dispatch, plan and report nothing. A tier's validators may run together or one after another; the script accepts only when all of them passed the same frozen state. `continue=same-worker` means: send the two lines to that worker with `SendMessage` instead of a new call; if that worker is gone, start a new one. On `Concurrent subagent limit reached`, run `LEDGER defer TASK <the refused items>`. If the host shows the model or effort a worker really ran on, add `--ran <model>/<effort>` to its `result`. If `init` or a `next:` line reports a pinning mismatch, or a call hides or rejects `model` or `effort`, nothing more is dispatched: read `references/pinning.md`.
 
 ## Evidence
 
-Each criterion has an ID and one evidence type; a record must use that same type, and weaker evidence never satisfies a stronger criterion. Re-run by the script: `behavioral`, `static`, `parse`, `format`, `schema`, `reconciliation`, `recompute`. Saved output or copy checked by the script: `command-output`, `source`. Cited location checked by the script: `inspection`. Choose the strongest type the work allows; `references/evidence.md` lists which fits which kind of task.
+Each criterion has an ID and one evidence type; a record must use that same type, and weaker evidence never satisfies a stronger criterion. A PASS means the command exits 0 and is more than fixed text; a required check that was not run is never a pass; the script never runs a command that may change an external system. Re-run by the script: `behavioral`, `static`, `parse`, `format`, `schema`, `reconciliation`, `recompute`. Saved output or copy checked by the script: `command-output`, `source`. Cited location checked by the script: `inspection`. Choose the strongest type the work allows; `references/evidence.md` lists which fits which kind of task.
 
 ## Progress log
 
@@ -104,7 +106,7 @@ Read a file only when its situation arises.
 - `references/tiers.md`: the tier is unclear, or the tier is D.
 - `references/kind-code.md`, `references/kind-infra.md`, `references/kind-data.md`: as step 1 says.
 - `references/evidence.md`: writing criteria for an unfamiliar kind, or a record was rejected and you must correct a brief.
-- `references/triage.md`: a `next:` line says narrow, gate, blocked or scope.
+- `references/triage.md`: a `next:` line says narrow, gate, blocked, scope or drift.
 - `references/budgets.md`: `dispatch` did not admit an item, or the user asks about cost.
 - `references/pinning.md`: `init` or a dispatch reports a model or effort problem.
 - `references/report.md`: the user asks what a report field means.

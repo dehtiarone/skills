@@ -65,6 +65,14 @@ export function startRun(t, { host = 'claude', tier = 'B', kind = 'code', plain 
       writeFileSync(evidence(slug, `take-${take}.report.md`), report);
       if (blocks !== null) writeFileSync(evidence(slug, `take-${take}.checks.md`), blocks.join('\n---\n'));
     },
+    /** A separate read-only item diagnoses a failing item; its report is what `classify` reads. */
+    diagnose(target, lines, slug = 'why-it-fails') {
+      run.plan(`item map ${slug} | Why does ${target} fail?`);
+      run.dispatch(`map/${slug}`);
+      run.record(slug, 1, null, `${lines.join('\n')}\n`);
+      run.result(`map/${slug}`, 'DONE');
+      return ledger('classify', task, target, lines[0].replace('class: ', ''), '--by', `map/${slug}`);
+    },
     log: () => readFileSync(join(task, 'log.txt'), 'utf8'),
     used: () => Number(readFileSync(join(task, 'run/used'), 'utf8')),
     field: (item, name) => readFileSync(join(task, 'items', item.replace('/', '.'), name), 'utf8').trim(),

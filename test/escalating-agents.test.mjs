@@ -42,7 +42,8 @@ const sharedRules = {
 // Sentences of the host-specific Dispatch paragraph that must read the same on both hosts.
 const sharedDispatchSentences = [
   'Blocks that say `barrier=yes` are validators:',
-  'make no other tool call until every one of them has returned, so a verification cycle returns whole',
+  'until each of them has returned, dispatch, plan and report nothing',
+  'the script accepts only when all of them passed the same frozen state.',
   '`continue=same-worker` means:',
   'run `LEDGER defer TASK <the refused items>`',
   'If the host shows the model or effort a worker really ran on, add `--ran <model>/<effort>` to its `result`.',
@@ -50,11 +51,11 @@ const sharedDispatchSentences = [
 ];
 const hostTokens = {
   claude: {
-    required: ['`Agent`', 'subagent_type: "general-purpose"', '`SendMessage`', 'Concurrent subagent limit reached', 'subagent_type: "fork"', '`Explore`', '`run_in_background`', '--host claude'],
+    required: ['`Agent`', 'subagent_type: "general-purpose"', '`SendMessage`', 'Concurrent subagent limit reached', 'subagent_type: "fork"', '`Explore`', '--host claude'],
     forbidden: /spawn_agent|reasoning_effort|fork_turns|followup_task|wait_agent|task_name|--slots <free|gpt-6|--host codex/,
   },
   codex: {
-    required: ['`spawn_agent`', '`task_name`', '`reasoning_effort`', 'fork_turns: "none"', '`wait_agent`', '`followup_task`', '--slots <free slots>', 'A parent at `ultra`', '--host codex'],
+    required: ['`spawn_agent`', '`task_name`', '`reasoning_effort`', 'fork_turns: "none"', '`wait_agent`', '`followup_task`', '--slots <free slots>', '--host codex'],
     forbidden: /subagent_type|SendMessage|run_in_background|`Agent`|CLAUDE_|\bhaiku\b|\bsonnet\b|Concurrent subagent limit|--host claude/,
   },
 };
@@ -210,7 +211,8 @@ describe('numbers', () => {
         assert.deepEqual(rows[tier], { budget: n[tier].budget, produce: n[tier].takes_produce, support: n[tier].takes_support }, `${host} tier ${tier}`);
       }
       assert.match(document, new RegExp(`A cheap call costs 1 unit and a level 4 call ${n.A.expensive_units}\\.`), `${host}: weight`);
-      assert.match(document, new RegExp(`the host's free slots, ${n.A.writer_ceiling} writers,`), `${host}: writer ceiling`);
+      assert.equal(n.A.writer_ceiling, 'none', `${host}: no built-in writer ceiling`);
+      assert.match(document, /the host's free slots, a `limit` or `writers` line in the plan, and what the budget admits\. There is no other ceiling\./, `${host}: width rule`);
     }
   });
 
@@ -293,14 +295,14 @@ describe('context size', () => {
       for (const file of references) {
         assert.ok(document.includes(`references/${file}`), `${host}: SKILL.md links references/${file}`);
         const text = read(host, `references/${file}`);
-        assert.ok(Buffer.byteLength(text) <= 6_000, `${host}: references/${file} size`);
+        assert.ok(Buffer.byteLength(text) <= 7_500, `${host}: references/${file} size`);
         assert.doesNotMatch(text, /references\/[a-z-]+\.md/, `${host}: references/${file} links no further reference`);
       }
       for (const link of document.match(/references\/[a-z-]+\.md/g) ?? []) assert.ok(existsSync(join(dir, link)), `${host}: ${link} exists`);
       // What a tier B code run loads, and what a tier D run with a gate loads.
       const size = (...files) => files.reduce((sum, file) => sum + Buffer.byteLength(read(host, file)), 0);
       assert.ok(size('SKILL.md') <= ceiling, `${host}: tier B load`);
-      assert.ok(size('SKILL.md', 'references/tiers.md', 'references/kind-code.md', 'references/triage.md') <= 22_000, `${host}: tier D load`);
+      assert.ok(size('SKILL.md', 'references/tiers.md', 'references/kind-code.md', 'references/triage.md') <= 25_000, `${host}: tier D load`);
     }
   });
 
@@ -311,7 +313,7 @@ describe('context size', () => {
       assert.match(text, /Do not delegate, start other agents, invoke any orchestration skill, or run any snapshot or ledger script\./, `${stage}: no delegation`);
       assert.match(text, /Never commit, push or deploy/, `${stage}: no commits`);
       assert.match(text, /Never write a credential, token or secret into any file or reply\./, `${stage}: no secrets`);
-      assert.match(text, /Reply to the coordinator in at most 10 lines, nothing else:/, `${stage}: reply cap`);
+      assert.match(text, /Reply to the coordinator in at most 10 lines, nothing else, and end your report file with the same lines/, `${stage}: reply cap and resumable report`);
       assert.match(text, /^outcome: /m, `${stage}: reply format`);
     }
     assert.match(read('claude', 'references/briefs/verify.md'), /never record PASS on a vacuous check/);

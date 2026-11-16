@@ -18,10 +18,10 @@ Write your report file with these sections, each short:
 4. `## Diagnosis`: only when asked why an item failed. End it with exactly these three lines:
    `class: capability|omission|environment|flaky|ambiguity|scope`
    `reproduced: yes|no` (yes only if you re-ran a failing check yourself)
-   `command: <the one shell command, run from the workspace root, that fails>` (the coordinator's script re-runs it)
+   `command: <the failing check, copied exactly: a check named in the criteria, or a command from the item's check records>` (the coordinator's script re-runs it; any other command confirms nothing)
 5. `## Open points`.
 
-Reply to the coordinator in at most 10 lines, nothing else:
+Reply to the coordinator in at most 10 lines, nothing else, and end your report file with the same lines (the run resumes from that file if your reply is lost):
 ```
 outcome: DONE | PARTIAL | BLOCKED
 record: <path of your report file>

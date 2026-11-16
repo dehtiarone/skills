@@ -20,7 +20,7 @@ const graderTypes = new Set(['regex', 'tool_used', 'tool_order', 'file_exists', 
 const common = [
   'briefs-carry-stage-header', 'workers-start-cheap-low', 'first-attempts-cheap-low', 'effort-ceiling', 'every-dispatch-pins-model-and-effort',
   'no-expensive-first-attempt', 'expensive-dispatch-uses-high', 'no-expensive-before-gate', 'workers-are-general-purpose', 'no-validator-by-message',
-  'validators-not-backgrounded', 'progress-log-format', 'effort-lines-carry-reason', 'model-lines-carry-gate', 'final-report-fields',
+  'progress-log-format', 'effort-lines-carry-reason', 'model-lines-carry-gate', 'final-report-fields',
   'coordinator-reads-only-run-files', 'coordinator-does-not-search', 'coordinator-does-not-read-scripts', 'coordinator-reads-nothing-by-shell',
   'expensive-dispatch-carries-header', 'ledger-init', 'dispatch-before-workers', 'ledger-report',
 ];
@@ -197,8 +197,6 @@ describe('dispatch graders against representative Agent inputs', () => {
     const validator = agent('Verify', 'checks', 1, 1, 'haiku', 'low');
     assert.ok(grader('validator-dispatched').regex.test(validator) && !grader('validator-dispatched').regex.test(ok));
     assert.ok(grader('review-validator-dispatched').regex.test(agent('Verify', 'review', 1, 1, 'haiku', 'low')) && !grader('review-validator-dispatched').regex.test(validator));
-    assert.ok(!passes(grader('validators-not-backgrounded'), agent('Verify', 'checks', 1, 1, 'haiku', 'low', { run_in_background: true })));
-    assert.ok(passes(grader('validators-not-backgrounded'), agent('Produce', 'x', 1, 1, 'haiku', 'low', { run_in_background: true })));
     assert.ok(grader('repair-dispatched').regex.test(agent('Produce', 'greet', 2, 2, 'haiku', 'medium')) && !grader('repair-dispatched').regex.test(ok) && !grader('repair-dispatched').regex.test(agent('Verify', 'checks', 2, 1, 'haiku', 'low')));
     assert.ok(grader('second-take-at-medium').regex.test(agent('Produce', 'greet', 2, 2, 'haiku', 'medium')));
     assert.ok(!grader('second-take-at-medium').regex.test(agent('Produce', 'greet', 2, 2, 'sonnet', 'medium')) && !grader('second-take-at-medium').regex.test(agent('Produce', 'greet', 2, 1, 'haiku', 'low')));
@@ -262,16 +260,14 @@ describe('trace graders against stream-shaped traces', () => {
       run.setScript('greet', `wrong ${take}`);
       run.record('greet-text', take, [block('C1', 'bin/greet', 'hello, world')]);
     };
-    run.plan('criterion C1 behavioral | bin/greet prints "hello, world"\nitem produce greet-text | Make bin/greet print hello, world | owns: bin/greet | criteria: C1');
+    run.plan('criterion C1 behavioral | bin/greet prints "hello, world" | check: bin/greet | expect: hello, world\nitem produce greet-text | Make bin/greet print hello, world | owns: bin/greet | criteria: C1');
     for (let take = 1; take <= 4; take++) {
       if (take === 4) run.dispatch('produce/greet-text', '--narrow', 'only the echoed text');
       else run.dispatch();
       bad(take);
       run.result('produce/greet-text', 'DONE');
     }
-    const diagnosis = join(run.task, 'evidence', 'why.md');
-    writeFileSync(diagnosis, 'class: capability\nreproduced: yes\n');
-    run.ok('classify', run.task, 'produce/greet-text', 'capability', '--evidence', diagnosis);
+    assert.equal(run.diagnose('produce/greet-text', ['class: capability', 'reproduced: yes']).status, 0);
     const gate = run.ok('gate', run.task, 'produce/greet-text');
     run.dispatch();
     run.setScript('greet', 'hello, world');
@@ -323,7 +319,7 @@ describe('trace graders against stream-shaped traces', () => {
     const gated = grader('no-expensive-before-gate');
     const gateCall = bash(`/p/ledger.sh gate ${task} produce/greet-text`);
     const sonnet = event('msg_x1', agent('Produce', 'greet-text', 5, 4, 'sonnet', 'high'));
-    assert.match(real.gate, /^⇧ model {4}produce\/greet-text {4}level 3→4 · haiku\/high → sonnet\/high · C1: decisive line not in output #\d+ · gate 6\/6 · escalation\.md$/m);
+    assert.match(real.gate, /^⇧ model {4}produce\/greet-text {4}level 3→4 · haiku\/high → sonnet\/high · C1: output lacks the expected text #\d+ · gate 6\/6 · escalation\.md$/m);
     assert.ok(passes(gated, trace(event('msg_g1', gateCall), result(gateCall.id, real.gate), sonnet)), 'gate, then the expensive take');
     assert.ok(passes(gated, escaped(trace(event('msg_g1', gateCall), result(gateCall.id, real.gate), sonnet))), 'escaped symbols');
     assert.ok(!passes(gated, trace(sonnet)), 'no gate at all');
@@ -405,7 +401,7 @@ describe('trace graders against stream-shaped traces', () => {
     assert.ok(passes(grader('plain-snapshots-used'), 'workspace /w (plain snapshots, base captured)') && !passes(grader('plain-snapshots-used'), real.init));
     const mismatch = '▶ run      tier B · 1 items · budget 24 units · coordinator sonnet/medium · pinning: known mismatch (CLAUDE_CODE_EFFORT_LEVEL=low)';
     assert.ok(passes(grader('discloses-pinning-override'), trace(event('msg_k1', text(mismatch)))) && !passes(grader('discloses-pinning-override'), trace(result('t', mismatch))));
-    assert.ok(passes(grader('known-mismatch-verdict'), 'Pinning: Known mismatch (CLAUDE_CODE_EFFORT_LEVEL=low); 0 call(s) ran on settings other than requested'));
+    assert.ok(passes(grader('known-mismatch-verdict'), 'Pinning: Known mismatch, accepted by the user (CLAUDE_CODE_EFFORT_LEVEL=low; the user: I accept that); 0 of 3 call(s)') && !passes(grader('known-mismatch-verdict'), 'Pinning: Known mismatch (CLAUDE_CODE_EFFORT_LEVEL=low)'));
     assert.ok(passes(grader('unresolved-reported'), 'Unresolved checks/work:\n  produce/greet-text: environment not fixed') && !passes(grader('unresolved-reported'), 'Unresolved checks/work: none\nWorkspace: clean'));
   });
 
@@ -600,7 +596,7 @@ describe('fixtures', () => {
     for (const file of ['findings-name-risky-bucket', 'findings-name-all-buckets', 'secret-not-in-findings']) assert.ok(fileGrader('cloud-infra-research', file, dir), file);
     writeFileSync(join(dir, 'report/findings.md'), `key ${secret}\n`);
     assert.ok(!fileGrader('cloud-infra-research', 'secret-not-in-findings', dir));
-    assert.ok(!passes(grader('secret-not-in-report'), `Secrets: none\n${secret}`) && passes(grader('secret-not-in-report'), 'Secrets: none found in briefs, evidence or log'));
+    assert.ok(!passes(grader('secret-not-in-report'), `Secrets: none\n${secret}`) && passes(grader('secret-not-in-report'), 'Secrets: none detected (by variable name and key pattern; not a guarantee)'));
   });
 
   it('the plain fixture is not a repository and its named check accepts only the sorted unique union', (t) => {

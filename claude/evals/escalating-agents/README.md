@@ -69,12 +69,12 @@ case scores 0.
 | `cloud-infra-research` | A stub cloud CLI: findings from saved read-only output, no changing call, no leaked credential |
 | `non-git-workspace` | A plain directory still gets snapshots and scope checks |
 | `tier-b-light-coordinator`, `tier-d-light-coordinator` | The tier B and tier D cases with the coordinator pinned to Haiku |
-| `unavailable-pinning-effort-env`, `known-mismatch-haiku-alias` | An effort or alias override is disclosed and reported as Known mismatch |
+| `unavailable-pinning-effort-env`, `known-mismatch-haiku-alias` | An effort or alias override is disclosed and stops dispatch; the prompt carries the user's acceptance, which the coordinator records with `pinning accept`, and the report says Known mismatch, accepted by the user |
 
-Every case also carries 23 common graders, the skill's invariants: every first attempt is `haiku`/`low`; no dispatch
+Every case also carries 22 common graders, the skill's invariants: every first attempt is `haiku`/`low`; no dispatch
 above `high` or below `low`, or without a pinned model and effort; no `sonnet` first attempt; a `sonnet` dispatch uses
 `high`, carries the level 4 header and follows a passed gate for the same item; workers are `general-purpose`;
-validators are neither backgrounded nor continued by message; the progress log has the documented format, every
+validators are not continued by message; the progress log has the documented format, every
 `effort` line has a reason and every `model` line a passed gate; the final report has its fields; and the coordinator
 reads only run files and references, searches nothing, reads nothing through the shell and does not read the scripts.
 That nothing is dispatched while a validator is out is enforced by the script itself (`dispatch` refuses while a batch

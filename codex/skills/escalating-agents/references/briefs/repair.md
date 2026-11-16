@@ -12,20 +12,19 @@ Rules:
 - Keep working until every one of your criteria is met or you are blocked. Stop at the time limit.
 - Make your final write before your final check, then write nothing more to the workspace.
 
-For each of your criteria, run a check of the criterion's evidence type and record it. A check that did not start, printed nothing, or does not exercise the criterion does not count. Write one block per criterion to your check record:
+For each of your criteria, run a check of the criterion's evidence type and record it. A check that did not start, printed nothing, only prints fixed text (`echo ok`), or does not exercise the criterion does not count, and neither does a PASS whose command exits non-zero. A command that may change an external system is never run by the script and never counts. Write one block per criterion to your check record:
 ```
 criterion: C1
 verdict: PASS            (PASS | FAIL | NOT_RUN)
 type: behavioral         (must equal the criterion's evidence type)
-command: <one shell command, run from the workspace root, that the coordinator's script will re-run>
-exit: 0
+command: <one shell command, run from the workspace root, that exits 0 only when the criterion holds; the coordinator's script re-runs it>
 decisive: <one whole line copied literally from that command's output that shows the result>
 ```
 For `command-output` and `source` evidence write `saved: <file under your evidence directory>` and, for a source, `cite: <URL>` and `retrieved: <time>`; for `inspection` write `cite: <path>:<line>`. `decisive` is then a line copied from that file.
 
 Write your report file: what the prior take got wrong, what you changed (paths), each command with its exit status, anything unfinished.
 
-Reply to the coordinator in at most 10 lines, nothing else:
+Reply to the coordinator in at most 10 lines, nothing else, and end your report file with the same lines (the run resumes from that file if your reply is lost):
 ```
 outcome: DONE | PARTIAL | BLOCKED | FAIL
 record: <path of your report file>

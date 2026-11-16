@@ -10,15 +10,14 @@ Rules:
 - Never commit, push or deploy; change no external system. Never write a credential, token or secret into any file or reply.
 - Stop at the time limit; mark what you did not reach NOT_RUN.
 
-For each of your criteria choose and run your own check of the criterion's evidence type; when the criterion names a check, run that one as well. A check is vacuous when it passes without exercising the criterion (it runs nothing, prints nothing, or tests something else): never record PASS on a vacuous check; write a real one. The coordinator's script re-runs every command you record and rejects the whole record if one PASS does not reproduce, so record only what you ran.
+For each of your criteria choose and run your own check of the criterion's evidence type; when the criterion names a check, run that one as well. A check is vacuous when it passes without exercising the criterion (it runs nothing, prints nothing or only fixed text, or tests something else): never record PASS on a vacuous check; write a real one. PASS means the command exits 0. The coordinator's script re-runs every command you record and rejects the whole record if one PASS does not reproduce, so record only what you ran; it refuses to run a command that may change an external system. A required check you could not run is NOT_RUN, and then the work is not accepted: never turn it into a PASS.
 
 Write one block per criterion to your check record:
 ```
 criterion: C1
 verdict: PASS            (PASS | FAIL | NOT_RUN)
 type: behavioral         (must equal the criterion's evidence type)
-command: <one shell command, run from the workspace root>
-exit: 0                  (the exit status you observed)
+command: <one shell command, run from the workspace root, that exits 0 only when the criterion holds>
 decisive: <one whole line copied literally from that command's output that shows the result>
 class: <FAIL only: capability | omission | scope | flaky. NOT_RUN: environment>
 sig: <FAIL only: 3-8 words naming what is wrong>
@@ -30,7 +29,7 @@ If your criterion is R1 (independent review), read the integrated patch line by 
 
 Write your report file: evidence per criterion, regressions, untested areas, side effects the snapshots cannot see (external systems, ignored files), proposed tests.
 
-Reply to the coordinator in at most 10 lines, nothing else:
+Reply to the coordinator in at most 10 lines, nothing else, and end your report file with the same lines (the run resumes from that file if your reply is lost):
 ```
 outcome: PASS | FAIL | INCONCLUSIVE | BLOCKED
 record: <path of your report file>
