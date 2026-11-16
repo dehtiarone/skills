@@ -17,10 +17,10 @@ CHEAP_TOP=3
 TYPES_RUN='behavioral static parse format reconciliation recompute schema'
 TYPES_SAVED='command-output source'
 TYPES_ALL="$TYPES_RUN $TYPES_SAVED inspection"
-MUTATION_RE='(^|[;&|[:space:]/])(aws|gcloud|gsutil|bq|az|kubectl|helm|terraform|tofu|pulumi|doctl|oci|psql|mysql|mongosh|snowsql|curl)[[:space:]].*((^|[[:space:]"(]|'"'"')(create|delete|remove|rm|rb|mb|put|post|patch|update|modify|set|add|attach|detach|associate|disassociate|run|start|stop|terminate|reboot|apply|destroy|deploy|import|restore|revoke|grant|authorize|enable|disable|tag|untag|cp|mv|sync|insert|drop|truncate|alter|scale|rollout|exec|cordon|drain|taint)([-[:space:]]|$)|-X[[:space:]]*(POST|PUT|PATCH|DELETE)|--data)'
+MUTATION_RE='(^|[;&|[:space:]/])(aws|gcloud|gsutil|bq|az|kubectl|helm|terraform|tofu|pulumi|doctl|oci|psql|mysql|mongosh|snowsql|curl|wget)[[:space:]].*((^|[[:space:]"(]|'"'"')(create|delete|remove|rm|rb|mb|put|post|patch|update|modify|set|add|attach|detach|associate|disassociate|run|start|stop|terminate|reboot|apply|destroy|deploy|import|restore|revoke|grant|authorize|enable|disable|tag|untag|cp|mv|sync|insert|drop|truncate|alter|scale|rollout|exec|cordon|drain|taint)([-[:space:]]|$)|(-X|--request)[[:space:]=]*(POST|PUT|PATCH|DELETE)|--data)|(^|[;&|[:space:]/])(curl|wget)([[:space:]].*)?[[:space:]](-d|-F|-T|--data[a-z-]*|--form[a-z-]*|--json|--upload-file|--post-data|--post-file)([[:space:]=]|$)|(^|[;&|[:space:]])(git[[:space:]]+push|(npm|pnpm|yarn|cargo|gem|twine)[[:space:]]+(publish|upload|push)|docker[[:space:]]+push|ssh|scp|sftp)[[:space:]]'
 
-# A cloud or database CLI: in an infra run the script executes one only when the plan fixed the command.
-EXTERNAL_RE='(^|[;&|[:space:]/])(aws|gcloud|gsutil|bq|az|kubectl|helm|terraform|tofu|pulumi|doctl|oci|psql|mysql|mongosh|snowsql)[[:space:]]'
+# A cloud, database or network CLI: the script executes one only when the plan fixed the command.
+EXTERNAL_RE='(^|[;&|[:space:]/])(aws|gcloud|gsutil|bq|az|kubectl|helm|terraform|tofu|pulumi|doctl|oci|psql|mysql|mongosh|snowsql|curl|wget|nc|gh)[[:space:]]'
 CONSTANT_RE='^(echo|printf|true|false|:|exit|cd|export|yes|sleep)$'
 SECRET_RE='(AKIA[0-9A-Z]{16}|-----BEGIN [A-Z ]*PRIVATE KEY-----|gh[pousr]_[A-Za-z0-9]{36}|xox[baprs]-[A-Za-z0-9-]{10,}|AIza[0-9A-Za-z_-]{35}|sk-[A-Za-z0-9_-]{32,})'
 
@@ -35,6 +35,7 @@ done
 unset secret_name secret_value
 redact() { # stdin to stdout with every detected secret value withheld
   local line name
+  if [[ -z "$SECRET_NAMES" ]]; then sed -E "s#$SECRET_RE#[withheld]#g"; return 0; fi
   while IFS= read -r line || [[ -n "$line" ]]; do
     for name in $SECRET_NAMES; do line=${line//"${!name}"/[withheld:$name]}; done
     printf '%s\n' "$line"
@@ -48,6 +49,11 @@ has_secret() { # text → 0, and SECRET_HIT names what was found (never the valu
   done
   if printf '%s\n' "$1" | grep -Eq -- "$SECRET_RE"; then SECRET_HIT='a key or token'; return 0; fi
   return 1
+}
+file_has_secret() {
+  local name
+  for name in $SECRET_NAMES; do grep -qF -- "${!name}" "$1" && return 0; done
+  grep -Eq -- "$SECRET_RE" "$1"
 }
 usage() {
   printf '%s\n' 'usage: ledger.sh init --host claude|codex --tier A|B|C|D --workspace DIR [--kind code|infra|data]' \
@@ -121,6 +127,18 @@ level_me() {
     fi
   done
   die "no level $2 on the ladder of $(iname "$1")"
+}
+# Does the model the host showed ($1) prove the requested one ($2)? 0 = an ID of the required
+# generation, 2 = the bare alias (generation not shown), 1 = another model or generation.
+model_shown() {
+  local seen=$1 full=$2
+  case "$2" in haiku) full=claude-haiku-5-5 ;; sonnet) full=claude-sonnet-5-5 ;; esac
+  seen=${seen##*/}; seen=${seen##*anthropic.}
+  case "$seen" in
+    "$full"|"$full"-[0-9v]*|"$full"@*|"$full":*|"$full"\[*) return 0 ;;
+    "$2") return 2 ;;
+  esac
+  return 1
 }
 effort_name() { if [[ "$HOST" == codex ]]; then printf reasoning_effort; else printf effort; fi; }
 time_limit() { if [[ "$TIER" == A || "$TIER" == B ]]; then printf 10; else printf 25; fi; }
@@ -200,6 +218,26 @@ ensure_verify_items() {
     add_item verify review 'Independent review: read the integrated patch line by line against the request, the decisions and the specifications.' '' 'R1' ''
   fi
 }
+# A changed criterion is new work. Every take, classification, confirmation and gate record against
+# the old wording stops counting: the items that own it start again at the cheap model on low.
+criterion_changed() { # criterion, plan line number
+  local id any=0
+  for id in $(items); do
+    [[ "$(istage "$id")" == produce ]] || continue
+    in_list "$1" "$(printf '%s' "$(iget "$id" criteria '')" | tr ',' ' ')" || continue
+    [[ "$(iget "$id" takes 0)" != 0 ]] || continue
+    [[ "$(iget "$id" status)" != running ]] || die "line $2: $(iname "$id") is running against criterion $1; record its result before changing the criterion"
+    iput "$id" level 1; iput "$id" status retry; iput "$id" exp_used 0; iput "$id" epoch "$(iget "$id" takes)"
+    iput "$id" class ''; iput "$id" class_source worker; iput "$id" confirmed ''; iput "$id" classify_evidence ''
+    iput "$id" narrowed 0; iput "$id" sigcount 0; iput "$id" conts 0; iput "$id" sig "criterion $1 changed"; iput "$id" last_outcome REPLANNED
+    : > "$TASK/items/$id/sigs"
+    if [[ -f "$(evidence_dir "$id")/escalation.md" ]]; then mv "$(evidence_dir "$id")/escalation.md" "$(evidence_dir "$id")/escalation.before-take-$(( $(iget "$id" takes) + 1 )).md"; fi
+    any=1
+    printf 'note: criterion %s changed: %s starts again at level 1 (%s/low); its earlier takes, diagnosis and gate record no longer count\n' "$1" "$(iname "$id")" "$N_CHEAP"
+    event replanned "$(iname "$id")" "criterion $1 changed"
+  done
+  if [[ "$any" == 1 || -n "$(rget frozen_name '')" ]]; then reset_validators; fi
+}
 plan_apply() {
   local line n=0 kw rest check expect text owns crit after locks field key stage slug type cid first_items planned=0
   first_items=$(items)
@@ -219,6 +257,9 @@ plan_apply() {
         cid=${rest%% *}; type=$(trim "${rest#"$cid"}")
         [[ "$cid" =~ ^[A-Z][A-Z0-9]{0,7}$ ]] || die "line $n: criterion ID must look like C1: $cid"
         in_list "$type" "$TYPES_ALL" || die "line $n: unknown evidence type '$type' (one of: $TYPES_ALL)"
+        if [[ -d "$TASK/criteria/$cid" ]] && [[ "$type" != "$(cat "$TASK/criteria/$cid/type")" || "$text" != "$(cat "$TASK/criteria/$cid/text")" || "$check" != "$(cat "$TASK/criteria/$cid/check" 2>/dev/null || true)" || "$expect" != "$(cat "$TASK/criteria/$cid/expect" 2>/dev/null || true)" ]]; then
+          criterion_changed "$cid" "$n"
+        fi
         mkdir -p "$TASK/criteria/$cid"
         printf '%s\n' "$type" > "$TASK/criteria/$cid/type"
         printf '%s\n' "$text" > "$TASK/criteria/$cid/text"
@@ -262,10 +303,11 @@ plan_apply() {
       limit)
         [[ "$rest" =~ ^[1-9][0-9]*$ ]] || die "line $n: limit takes a positive number of parallel workers"
         rput limit "$rest" ;;
+      scratch) rput scratch "$(rget scratch '') $(printf '%s' "$rest" | tr ',' ' ')" ;;
       writers)
         [[ "$rest" =~ ^[1-9][0-9]*$ ]] || die "line $n: writers takes a positive number of parallel produce workers"
         rput writers "$rest" ;;
-      *) die "line $n: unknown plan keyword '$kw' (request, criterion, item, decision, allow, limit, writers)" ;;
+      *) die "line $n: unknown plan keyword '$kw' (request, criterion, item, decision, allow, limit, writers, scratch)" ;;
     esac
   done
   # The script executes a named check itself, so one that may change an external system needs the user's allow line.
@@ -303,14 +345,14 @@ cmd_plan() {
   local backup f saved
   backup=$(mktemp -d "$TASK/plan.XXXXXX")
   cp -R "$TASK/criteria" "$TASK/items" "$backup/"
-  for f in order decisions.md request.md allowed-external.md run/limit run/writers run/run_line log.txt; do
+  for f in order decisions.md request.md allowed-external.md run/limit run/writers run/scratch run/run_line log.txt; do
     if [[ -f "$TASK/$f" ]]; then cp "$TASK/$f" "$backup/$(printf '%s' "$f" | tr '/' '_')"; fi
   done
   if ( plan_apply ); then rm -rf "$backup"; next_hint; return 0; fi
   # A plan is applied whole or not at all, so a corrected plan can simply be sent again.
   rm -rf "$TASK/criteria" "$TASK/items"
   mv "$backup/criteria" "$backup/items" "$TASK/"
-  for f in order decisions.md request.md allowed-external.md run/limit run/writers run/run_line log.txt; do
+  for f in order decisions.md request.md allowed-external.md run/limit run/writers run/scratch run/run_line log.txt; do
     saved="$backup/$(printf '%s' "$f" | tr '/' '_')"
     if [[ -f "$saved" ]]; then cp "$saved" "$TASK/$f"; else rm -f "$TASK/$f"; fi
   done
@@ -606,7 +648,7 @@ cmd_dispatch() {
       rput drift_block "$(trim "$gap")"; rput drift_snap "$pre"
       say fail failed "$(printf '%-22s%s' workspace "changed outside any dispatch: $(clean "$gap" 120)")"
       event drift - "$gap"
-      printf 'next: nothing was dispatched. %s\n' "$(drift_help)"
+      printf 'next: nothing was dispatched. %s%s\n' "$(if [[ -s "$TASK/check-writes" ]]; then printf 'A check the script re-ran wrote files (%s): a check must leave the workspace alone, so correct the check, have its output ignored, or release the path with a plan line: scratch GLOB. ' "$(tail -n 1 "$TASK/check-writes")"; fi)" "$(drift_help)"
       return 0
     fi
     tree=$(cat "$TASK/state/trees/$pre.tree")
@@ -682,33 +724,74 @@ cmd_defer() { # the host refused these spawns for capacity: undo the dispatch an
 }
 
 # ---- evidence acceptance ---------------------------------------------------------------------
-run_check() { # command outfile timeout → RUN_EXIT. Every command the script executes is logged.
-  local pid i
+run_check() { # command outfile timeout [plan] → RUN_EXIT, RUN_LEAK. Every command the script executes is logged.
+  local pid i raw name
   printf '%s\t%s\n' "$(now)" "$1" >> "$TASK/commands.log"
   RAN_CHECKS=1
-  ( cd "$WORKSPACE" && exec bash -c "$1" ) > "$2" 2>&1 < /dev/null &
+  raw=$(mktemp "$TASK/check.XXXXXX")
+  (
+    cd "$WORKSPACE" || exit 126
+    # A command a worker chose runs without the credentials the script recognises; a plan check keeps them.
+    if [[ "${4:-}" != plan ]]; then for name in $SECRET_NAMES; do unset "$name"; done; fi
+    exec bash -c "$1"
+  ) > "$raw" 2>&1 < /dev/null &
   pid=$!
   ( i=0; while [[ "$i" -lt "$3" ]]; do sleep 1; i=$((i + 1)); kill -0 "$pid" 2>/dev/null || exit 0; done; kill -TERM "$pid" 2>/dev/null ) &
   if wait "$pid"; then RUN_EXIT=0; else RUN_EXIT=$?; fi
+  # Output becomes evidence only after the secret filter; the unfiltered copy is removed.
+  RUN_LEAK=0; if file_has_secret "$raw"; then RUN_LEAK=1; fi
+  redact < "$raw" > "$2"
+  rm -f "$raw"
+}
+# A check must leave the workspace as it found it (ignored paths and the plan's `scratch` globs aside). Called after the script ran checks: CHECK_WROTE lists what they changed. Nothing is absorbed
+# into the validated state and nothing is reverted: the next dispatch stops on the change.
+check_writes() {
+  local name out rc=0 ref
+  CHECK_WROTE=''
+  [[ "${RAN_CHECKS:-0}" == 1 ]] || return 0
+  RAN_CHECKS=0
+  ref=${CHECK_REF:-$(rget last_post)}
+  rput snapn $(( $(rget snapn 0) + 1 )); name="checked-$(rget snapn)"
+  set -f
+  # shellcheck disable=SC2046
+  out=$(snap checkpoint "$TASK/state" "$ref" "$name" - $(rget scratch '') 2>&1) || rc=$?
+  set +f
+  [[ "$rc" == 0 || "$rc" == 3 ]] || die "snapshot checkpoint failed: $out"
+  if [[ "$rc" == 3 ]]; then
+    CHECK_WROTE=$(printf '%s\n' "$out" | sed -n 's/^out-of-scope: //p' | tr '\n' ' ')
+    printf '%s\n' "$CHECK_WROTE" >> "$TASK/check-writes"
+    CHECK_REF=$name; CHECK_DIRTY=1
+  elif ! cmp -s "$TASK/state/trees/$ref.tree" "$TASK/state/trees/$name.tree"; then
+    # Only paths the plan released with a `scratch` line changed.
+    CHECK_REF=$name
+    [[ "${CHECK_DIRTY:-0}" == 1 ]] || rput last_post "$name"
+  fi
 }
 outsig() { printf '#%s' "$(cksum < "$1" | cut -d' ' -f1 | tail -c 5)"; }
 strip_ticks() { local v=$1; if [[ "$v" == '`'*'`' && ${#v} -ge 2 ]]; then v=${v#\`}; v=${v%\`}; fi; printf '%s' "$v"; }
 allowed_external() { [[ -f "$TASK/allowed-external.md" ]] && grep -qF -- "$1" "$TASK/allowed-external.md"; }
 # The script is about to execute a command a worker wrote. GUARD names why it must not run, if so.
 # This is a screen, not a sandbox: it refuses what it recognises and cannot prove a command harmless.
-guard_command() { # command, criterion (or ''), who recorded it
-  local named=''
+guard_command() { # command, the plan check it must equal to be trusted (or ''), who recorded it
   GUARD=''
-  [[ -z "${2:-}" ]] || named=$(cat "$TASK/criteria/$2/check" 2>/dev/null || true)
   if printf '%s\n' "$1" | grep -Eiq -- "$MUTATION_RE" && ! allowed_external "$1"; then
     GUARD='not run: the command may change an external system'
-  elif [[ "$(rget kind code)" == infra && "$1" != "$named" ]] && printf '%s\n' "$1" | grep -Eiq -- "$EXTERNAL_RE" && ! allowed_external "$1"; then
-    GUARD='not run: an external command the plan did not fix (save its output as command-output evidence instead)'
+  elif [[ -z "${2:-}" || "$1" != "$2" ]] && ! allowed_external "$1"; then
+    if [[ "$(rget kind code)" == infra ]]; then
+      GUARD='not run: in an infra run the script executes only a check fixed in the plan (check: or allow); save the output as command-output evidence instead'
+    elif printf '%s\n' "$1" | grep -Eiq -- "$EXTERNAL_RE"; then
+      GUARD='not run: a network or cloud command the plan did not fix (check: or allow)'
+    fi
   fi
   [[ -z "$GUARD" ]] || printf '%s\t%s\t%s\n' "${3:-script}" "$GUARD" "$1" >> "$TASK/refused"
 }
 constant_command() { # 0 when the command can only print fixed text or return a fixed status
-  local rest=$1 seg word
+  local rest=$1 seg word wrap='^[[:space:]]*(((ba|z|da|k)?sh|env)[[:space:]]+(-[a-z]+[[:space:]]+)*-c|eval|exec|command|time)[[:space:]]+(.*)$'
+  # bash -c '…', sh -c "…" and eval '…' are judged by what they wrap.
+  while [[ "$rest" =~ $wrap ]]; do
+    rest=$(trim "${BASH_REMATCH[5]}")
+    case "$rest" in \'*\') rest=${rest#\'}; rest=${rest%\'} ;; \"*\") rest=${rest#\"}; rest=${rest%\"} ;; esac
+  done
   case "$rest" in *'$('*|*'`'*|*'<('*) return 1 ;; esac
   rest=$(printf '%s' "$rest" | tr ';&|' '\n\n\n')
   while IFS= read -r seg; do
@@ -741,41 +824,50 @@ judge_block() {
     if [[ -z "$res" ]]; then
       if in_list "$B_type" "$TYPES_RUN"; then
         named=$(cat "$TASK/criteria/$B_criterion/check" 2>/dev/null || true); expect=$(cat "$TASK/criteria/$B_criterion/expect" 2>/dev/null || true)
-        basis=worker
-        guard_command "$B_command" "$B_criterion" "$(iname "$id")"
-        if [[ -z "$B_command" ]]; then res=unsupported; detail='no command'
-        elif [[ -n "$GUARD" ]]; then res=unsupported; detail=$GUARD
-        elif [[ "$B_command" != "$named" ]] && constant_command "$B_command"; then
-          res=unsupported; detail="$(clean "$B_command" 30) only prints fixed text: it does not exercise the criterion"
-        else
-          [[ "$B_timeout" =~ ^[0-9]+$ && "$B_timeout" -le 1800 && "$B_timeout" -ge 1 ]] || B_timeout=300
-          run_check "$B_command" "$out" "$B_timeout"
-          if [[ "$RUN_EXIT" == 126 || "$RUN_EXIT" == 127 ]]; then
-            # The check did not start: that says nothing about the work.
-            res=unsupported; detail="check could not start: $(clean "$B_command" 30) exit $RUN_EXIT"
-          elif [[ "$B_verdict" == PASS ]]; then
-            # A pass means exit status 0. The worker does not get to choose what success looks like.
-            if [[ "$RUN_EXIT" != 0 ]]; then res=unsupported; detail="$(clean "$B_command" 30) exit $RUN_EXIT $(outsig "$out")"; ACC_RERUN=1
-            elif [[ "$named" == "$B_command" && -n "$expect" ]] && ! grep -qF -- "$expect" "$out"; then res=unsupported; detail="output lacks the expected text $(outsig "$out")"; ACC_RERUN=1
-            elif [[ ! -s "$out" ]]; then res=unsupported; detail="$(clean "$B_command" 30) printed nothing"
-            elif ! grep -qF -- "$B_decisive" "$out"; then res=unsupported; detail="decisive line not in output $(outsig "$out")"
-            else res=pass; detail="$(clean "$B_command" 50) exit $RUN_EXIT"; fi
-            # A check or expected text the coordinator fixed in the plan outranks the worker's own choice.
-            if [[ "$res" == pass && -n "$named" ]]; then
-              basis=plan
-              if [[ "$named" != "$B_command" ]]; then
-                run_check "$named" "$out.named" 300
-                if [[ "$RUN_EXIT" != 0 ]]; then res=unsupported; detail="named check $(clean "$named" 30) exit $RUN_EXIT $(outsig "$out.named")"; ACC_RERUN=1
-                elif [[ -n "$expect" ]] && ! grep -qF -- "$expect" "$out.named" && ! grep -qF -- "$expect" "$out"; then res=unsupported; detail="output lacks the expected text $(outsig "$out.named")"; ACC_RERUN=1; fi
-              elif [[ -n "$expect" ]] && ! grep -qF -- "$expect" "$out"; then
-                res=unsupported; detail="output lacks the expected text $(outsig "$out")"; ACC_RERUN=1
-              fi
-            elif [[ "$res" == pass && -n "$expect" ]] && ! grep -qF -- "$expect" "$out"; then
-              res=unsupported; detail="output lacks the expected text $(outsig "$out")"; ACC_RERUN=1
-            fi
+        [[ "$B_timeout" =~ ^[0-9]+$ && "$B_timeout" -le 1800 && "$B_timeout" -ge 1 ]] || B_timeout=300
+        if [[ -n "$named" && ( "$B_verdict" == PASS || "$B_command" == "$named" ) ]]; then
+          # The plan fixed the check: only its own run decides. Whatever else the worker ran or
+          # printed counts for nothing, and the expected text must be in this output.
+          basis=plan
+          guard_command "$named" "$named" "$(iname "$id")"
+          if [[ -n "$GUARD" ]]; then res=unsupported; detail=$GUARD
           else
-            if [[ "$RUN_EXIT" == 0 ]]; then res=unsupported; detail="reported FAIL but $(clean "$B_command" 40) exits 0"
-            else res=fail; detail="$(clean "$B_command" 30) exit $RUN_EXIT $(outsig "$out")"; ACC_RERUN=1; fi
+            run_check "$named" "$out" "$B_timeout" plan
+            if [[ "$RUN_EXIT" == 126 || "$RUN_EXIT" == 127 ]]; then res=unsupported; detail="check could not start: $(clean "$named" 30) exit $RUN_EXIT"
+            elif [[ "$RUN_LEAK" == 1 ]]; then res=unsupported; detail="the output of $(clean "$named" 30) held a secret (withheld); the record does not count"
+            elif [[ "$B_verdict" == FAIL ]]; then
+              if [[ "$RUN_EXIT" == 0 ]]; then res=unsupported; detail="reported FAIL but $(clean "$named" 40) exits 0"
+              else res=fail; detail="$(clean "$named" 30) exit $RUN_EXIT $(outsig "$out")"; ACC_RERUN=1; fi
+            elif [[ "$RUN_EXIT" != 0 ]]; then res=unsupported; detail="$(clean "$named" 30) exit $RUN_EXIT $(outsig "$out")"; ACC_RERUN=1
+            elif [[ -n "$expect" ]] && ! grep -qF -- "$expect" "$out"; then res=unsupported; detail="output lacks the expected text $(outsig "$out")"; ACC_RERUN=1
+            else res=pass; detail="$(clean "$named" 50) exit 0"; fi
+          fi
+        else
+          # No plan check (or a FAIL found with another command): the worker chose the command. The
+          # script re-runs it, but a pass on it is reported as provisional.
+          basis=worker
+          guard_command "$B_command" '' "$(iname "$id")"
+          if [[ -z "$B_command" ]]; then res=unsupported; detail='no command'
+          elif [[ -n "$GUARD" ]]; then res=unsupported; detail=$GUARD
+          elif constant_command "$B_command"; then
+            res=unsupported; detail="$(clean "$B_command" 30) only prints fixed text: it does not exercise the criterion"
+          else
+            run_check "$B_command" "$out" "$B_timeout"
+            if [[ "$RUN_EXIT" == 126 || "$RUN_EXIT" == 127 ]]; then
+              # The check did not start: that says nothing about the work.
+              res=unsupported; detail="check could not start: $(clean "$B_command" 30) exit $RUN_EXIT"
+            elif [[ "$RUN_LEAK" == 1 ]]; then res=unsupported; detail="the output of $(clean "$B_command" 30) held a secret (withheld); the record does not count"
+            elif [[ "$B_verdict" == PASS ]]; then
+              # A pass means exit status 0. The worker does not get to choose what success looks like.
+              if [[ "$RUN_EXIT" != 0 ]]; then res=unsupported; detail="$(clean "$B_command" 30) exit $RUN_EXIT $(outsig "$out")"; ACC_RERUN=1
+              elif [[ -n "$expect" ]] && ! grep -qF -- "$expect" "$out"; then res=unsupported; detail="output lacks the expected text $(outsig "$out")"; ACC_RERUN=1
+              elif [[ ! -s "$out" ]]; then res=unsupported; detail="$(clean "$B_command" 30) printed nothing"
+              elif ! grep -qF -- "$B_decisive" "$out"; then res=unsupported; detail="decisive line not in output $(outsig "$out")"
+              else res=pass; detail="$(clean "$B_command" 50) exit $RUN_EXIT"; fi
+            else
+              if [[ "$RUN_EXIT" == 0 ]]; then res=unsupported; detail="reported FAIL but $(clean "$B_command" 40) exits 0"
+              else res=fail; detail="$(clean "$B_command" 30) exit $RUN_EXIT $(outsig "$out")"; ACC_RERUN=1; fi
+            fi
           fi
         fi
       else
@@ -831,23 +923,11 @@ accept_record() {
       *) ACC_OK=0; ACC_REASON="${ACC_REASON:+$ACC_REASON; }$c: $val" ;;
     esac
   done < "$VERDICT_FILE"
-  ACC_REASON=$(clean "$ACC_REASON" 90)
-}
-
-absorb_check_writes() { # batch: call after the script re-ran checks
-  local name out rc=0 paths
-  [[ "${RAN_CHECKS:-0}" == 1 ]] || return 0
-  RAN_CHECKS=0
-  name="checked-$1-$(( $(rget snapn 0) + 1 ))"; rput snapn $(( $(rget snapn 0) + 1 ))
-  out=$(snap checkpoint "$TASK/state" "$(rget last_post)" "$name" -) || rc=$?
-  [[ "$rc" == 0 || "$rc" == 3 ]] || die "snapshot checkpoint failed: $out"
-  if [[ "$rc" == 3 ]]; then
-    paths=$(printf '%s\n' "$out" | sed -n 's/^out-of-scope: //p' | tr '\n' ' ')
-    printf '%s\n' "$paths" >> "$TASK/check-writes"
-    printf 'note: re-running the recorded checks wrote files: %s(recorded; checks should write only to ignored paths or the evidence directory)\n' "$paths"
-    snap checkpoint "$TASK/state" "$name" "$name" "$TASK/evidence/integrated-post-$1.patch" > /dev/null
+  check_writes
+  if [[ -n "$CHECK_WROTE" ]]; then
+    ACC_OK=0; ACC_RERUN=0; ACC_REASON="a check changed workspace files ($(trim "$CHECK_WROTE")): checks may write only to ignored paths or the plan's scratch globs${ACC_REASON:+; $ACC_REASON}"
   fi
-  rput last_post "$name"
+  ACC_REASON=$(clean "$ACC_REASON" 110)
 }
 
 # ---- ladder ----------------------------------------------------------------------------------
@@ -964,9 +1044,13 @@ cmd_result() {
   dur=$(( $(now) - $(iget "$id" started) ))
   level_me "$id" "$(iget "$id" level)"
   local mism=''
-  # The host may show a full model name for an alias: `claude-haiku-5-5/low` is `haiku/low`.
-  if [[ -n "$ran" && "${ran%/*}" == *"$ME_MODEL"* && "${ran##*/}" == "$ME_EFFORT" ]]; then ran="$ME_MODEL/$ME_EFFORT"; fi
-  if [[ -n "$ran" && "$ran" != "$ME_MODEL/$ME_EFFORT" ]]; then
+  # What the host showed is kept as shown. Only a model ID of the required generation verifies the model.
+  local shownas=1
+  if [[ -n "$ran" && "${ran##*/}" == "$ME_EFFORT" ]]; then shownas=0; model_shown "${ran%/*}" "$ME_MODEL" || shownas=$?; fi
+  # shownas: 0 exact generation, 2 alias only, 1 anything else
+  if [[ -n "$ran" && "$shownas" == 0 ]]; then rput shown_exact $(( $(rget shown_exact 0) + 1 ))
+  elif [[ -n "$ran" && "$shownas" == 2 ]]; then rput shown_alias $(( $(rget shown_alias 0) + 1 ))
+  elif [[ -n "$ran" ]]; then
     mism=" (requested $ME_MODEL/$ME_EFFORT, ran $ran)"
     rput mismatches $(( $(rget mismatches 0) + 1 ))
     if [[ "$(rget pinning unverified)" != relaxed ]]; then
@@ -1064,18 +1148,18 @@ settle_batch() {
   printf '%s\n' "$(( $(now) - start ))" > "$TASK/batches/$batch/elapsed"
   rput batch_open ''
   if [[ "$stage" == verify ]]; then settle_verify "$@"; return 0; fi
-  absorb_check_writes "$batch"
   if [[ "$total" -gt 1 ]]; then
     say end "batch $batch" "$ndone/$total done$(sep)$(elapsed "$(cat "$TASK/batches/$batch/elapsed")")"
   fi
   # Tier A has no validator: the script-run check on the captured state is the acceptance.
   if [[ "$N_V" == 0 && "$(produce_open)" == 0 ]]; then
-    local nacc=0 ncrit=0 c
+    local nacc=0 ncrit=0 c basis
     for id in $(items); do
       if [[ "$(iget "$id" status)" == done ]]; then
         iput "$id" status accepted; nacc=$((nacc + 1))
         for c in $(printf '%s' "$(iget "$id" criteria '')" | tr ',' ' '); do
-          ncrit=$((ncrit + 1)); printf '%s\tPASS\t%s\tscript re-run on post-%s\tplan\n' "$c" "$(cat "$TASK/criteria/$c/type")" "$batch" >> "$TASK/verified"
+          ncrit=$((ncrit + 1)); basis=$(grep -h "^$c|" "$(evidence_dir "$id")/take-$(iget "$id" takes).verdict" 2>/dev/null | tail -n 1 | cut -d'|' -f8)
+          printf '%s\tPASS\t%s\tscript re-run on post-%s\t%s\n' "$c" "$(cat "$TASK/criteria/$c/type")" "$batch" "${basis:-saved}" >> "$TASK/verified"
         done
       fi
     done
@@ -1156,7 +1240,6 @@ settle_verify() {
         advance "$id" "$outcome" "$cls" "${sg:-$outcome}" ;;
     esac
   done
-  absorb_check_writes "$batch"
   if [[ -n "$failed" ]]; then
     # A correct FAIL is successful validation: the failed items move, the validators do not.
     rput cycle $(( $(rget cycle 0) + 1 ))
@@ -1248,7 +1331,7 @@ cmd_scope() {
 # ---- model gate ------------------------------------------------------------------------------
 cmd_gate() {
   load_task "${1:-}"; shift
-  local id impossible='' ev cheap=0 attop=0 take level me t dur outcome cls sg rest pass=0 c1 c2 c3 c4 c5 c6 owed class used source prev cur
+  local id impossible='' ev cheap=0 attop=0 take level me t dur outcome cls sg rest pass=0 c1 c2 c3 c4 c5 c6 owed class used source prev cur epoch
   id=$(iid "${1:-}"); shift
   if [[ "${1:-}" == --narrowing-impossible ]]; then impossible=$(scrub "${2:-}"); [[ -n "$impossible" ]] || die 'give the reason narrowing is impossible'; fi
   [[ "$(istage "$id")" == produce ]] || die 'only produce items may move to the expensive model'
@@ -1257,7 +1340,9 @@ cmd_gate() {
   fi
   [[ "$(iget "$id" status)" == need-gate ]] || die "$(iname "$id") is not at the gate (status: $(iget "$id" status)); the ladder decides when"
   ev=$(evidence_dir "$id"); mkdir -p "$ev"
+  epoch=$(iget "$id" epoch 0)
   while IFS=$'\t' read -r take level me _ _ dur outcome cls sg rest; do
+    [[ "$take" -gt "$epoch" ]] || continue
     if [[ "$level" -le "$CHEAP_TOP" ]]; then cheap=$((cheap + 1)); fi
     if [[ "$level" == "$CHEAP_TOP" ]]; then attop=$((attop + 1)); fi
   done < "$TASK/items/$id/history"
@@ -1266,7 +1351,7 @@ cmd_gate() {
   owed=$(owed_units "$id"); source=$(iget "$id" class_source worker)
   c1=FAIL; [[ "$attop" -ge 1 && "$cheap" -ge "$N_GATE_MIN" ]] && c1=PASS
   c2=PASS
-  t=2
+  t=$((epoch + 2))
   prev=''
   while [[ "$t" -le "$(iget "$id" takes)" ]]; do
     # A retry that only repeats the previous instruction is the same approach again.
@@ -1369,10 +1454,14 @@ cmd_classify() {
     elif ! item_check_known "$id" "$command" || constant_command "$command"; then
       printf 'note: %s is neither a plan check of this item'"'"'s criteria nor a command from its check records, so its failing proves nothing about the item; the failure stays unconfirmed\n' "$(clean "$command" 60)"
     else
-      guard_command "$command" '' "$(iname "$mid")"
+      local named='' c
+      for c in $(printf '%s' "$(iget "$id" criteria '')" | tr ',' ' '); do
+        [[ "$(cat "$TASK/criteria/$c/check" 2>/dev/null || true)" != "$command" ]] || named=$command
+      done
+      guard_command "$command" "$named" "$(iname "$mid")"
       if [[ -n "$GUARD" ]]; then printf 'note: %s was %s; the failure stays unconfirmed\n' "$(clean "$command" 60)" "$GUARD"
       else
-        run_check "$command" "$out" 300
+        run_check "$command" "$out" 300 "$(if [[ -n "$named" ]]; then printf plan; fi)"
         if [[ "$RUN_EXIT" == 126 || "$RUN_EXIT" == 127 ]]; then printf 'note: %s could not start (exit %s): an environment problem, not a confirmed failure\n' "$(clean "$command" 60)" "$RUN_EXIT"
         elif [[ "$RUN_EXIT" != 0 ]]; then iput "$id" confirmed check; printf 'reproduced: %s exits %s\n' "$(clean "$command" 60)" "$RUN_EXIT"
         else printf 'note: the diagnosis says reproduced, but %s exits 0 here; the failure stays unconfirmed\n' "$(clean "$command" 60)"; fi
@@ -1572,7 +1661,7 @@ secret_scan() { # prints file names only, never values
 cmd_report() {
   load_task "${1:-}"; shift
   local external='' usage_text='' id st accepted=0 unresolved=0 total=0 out rc=0 drift='' secrets muts=0 low=0 med=0 high=0 exp=0
-  local take level me ran batch dur outcome cls sg units f verdict='Requested but unverified' b final state soft='' refused=0
+  local take level me ran batch dur outcome cls sg units f verdict='Requested but unverified' b final state soft='' refused=0 snaperr=''
   while [[ $# -gt 0 ]]; do
     case "$1" in --external) external=$(scrub "${2:-}"); shift 2 ;; --usage) usage_text=$(scrub "${2:-}"); shift 2 ;; *) die "unknown option: $1" ;; esac
   done
@@ -1580,10 +1669,13 @@ cmd_report() {
   # Every report looks at the workspace as it is now: an earlier report proves nothing about today.
   rput reports $(( $(rget reports 0) + 1 )); final="final-$(rget reports)"
   if [[ -n "$(rget validated '')" ]]; then
-    out=$(snap checkpoint "$TASK/state" "$(rget validated)" "$final" -) || rc=$?
-    [[ "$rc" == 0 ]] || drift=$(printf '%s\n' "$out" | sed -n 's/^out-of-scope: //p' | tr '\n' ' ')
-  else snap capture "$TASK/state" "$final" > /dev/null; fi
+    out=$(snap checkpoint "$TASK/state" "$(rget validated)" "$final" - 2>&1) || rc=$?
+    # 3 is a detected difference; anything else is the helper failing, which proves nothing either way.
+    if [[ "$rc" == 3 ]]; then drift=$(printf '%s\n' "$out" | sed -n 's/^out-of-scope: //p' | tr '\n' ' ')
+    elif [[ "$rc" != 0 ]]; then snaperr=$(clean "$out" 160); fi
+  else out=$(snap capture "$TASK/state" "$final" 2>&1) || snaperr=$(clean "$out" 160); fi
   state=$(open_reason "$drift")
+  [[ -z "$snaperr" ]] || state="INVALID (the workspace could not be compared with the validated state: $snaperr)"
   for id in $(items); do
     [[ "$(istage "$id")" == verify ]] && continue
     total=$((total + 1)); st=$(iget "$id" status)
@@ -1599,18 +1691,21 @@ cmd_report() {
   [[ ! -f "$TASK/mutations" ]] || muts=$(sort -u "$TASK/mutations" | wc -l | tr -d ' ')
   [[ ! -f "$TASK/refused" ]] || refused=$(sort -u "$TASK/refused" | wc -l | tr -d ' ')
   [[ ! -s "$TASK/verified" ]] || soft=$(awk -F '\t' '$5 == "worker" { printf " %s", $1 }' "$TASK/verified")
-  # Verified only when the host showed, for every call, the settings that were requested.
-  local shown=0 calls=0
+  # A pass on a check the worker chose is not an independent check of the criterion.
+  if [[ "$state" == complete && -n "$soft" ]]; then state="complete, PROVISIONAL (no check fixed in the plan for:$soft)"; fi
+  # Verified only when the host showed, for every call, the requested effort and a model ID of the
+  # required generation. An alias alone ("haiku") does not show which generation ran.
+  local shown=0 calls=0 alias_only
+  shown=$(rget shown_exact 0); alias_only=$(rget shown_alias 0)
   for id in $(items); do
     [[ -f "$TASK/items/$id/history" ]] || continue
-    while IFS=$'\t' read -r take level me ran batch dur outcome cls sg units; do
-      calls=$((calls + 1)); [[ "$ran" == "$me" ]] && shown=$((shown + 1))
-    done < "$TASK/items/$id/history"
+    calls=$((calls + $(wc -l < "$TASK/items/$id/history" | tr -d ' ')))
   done
   if [[ "$(rget pinning unverified)" == relaxed ]]; then verdict="Known mismatch, accepted by the user ($(rget pinning_cause); the user: $(rget pinning_accept))"
   elif [[ "$(rget pinning unverified)" == mismatch ]]; then verdict="Known mismatch ($(rget pinning_cause))"
   elif [[ "$(rget mismatches 0)" != 0 ]]; then verdict="Known mismatch ($(rget mismatches) call(s) ran on other settings than requested)"
-  elif [[ "$calls" -gt 0 && "$shown" == "$calls" ]]; then verdict='Verified'; fi
+  elif [[ "$calls" -gt 0 && "$shown" == "$calls" ]]; then verdict='Verified'
+  elif [[ "$alias_only" != 0 ]]; then verdict="Requested; model generation unverified ($alias_only call(s) shown by alias only)"; fi
   {
     printf 'Tier: %s%s\n' "$TIER" "$(if [[ -n "$(rget tier_from '')" ]]; then printf ' (promoted from %s)' "$(rget tier_from)"; fi)"
     printf 'Kind: %s\n' "$(rget kind)"
@@ -1624,7 +1719,7 @@ cmd_report() {
         case "$me" in "$N_EXP"/*) exp=$((exp + 1)) ;; */low) low=$((low + 1)) ;; */medium) med=$((med + 1)) ;; */high) high=$((high + 1)) ;; esac
       done < "$TASK/items/$id/history"
     done
-    printf 'Pinning: %s; %s of %s call(s) shown by the host as run on the requested settings, %s on other settings\n' "$verdict" "$shown" "$calls" "$(rget mismatches 0)"
+    printf 'Pinning: %s; %s of %s call(s) shown by the host as run on the requested model generation and effort, %s by alias only, %s on other settings\n' "$verdict" "$shown" "$calls" "$alias_only" "$(rget mismatches 0)"
     printf 'Parallelism: %s batches | peak %s concurrent | elapsed per batch:' "$(rget batch 0)" "$(rget peak 0)"
     b=1
     while [[ "$b" -le "$(rget batch 0)" ]]; do printf ' %s=%s' "$b" "$(elapsed "$(cat "$TASK/batches/$b/elapsed" 2>/dev/null || printf 0)")"; b=$((b + 1)); done
@@ -1634,7 +1729,7 @@ cmd_report() {
       "$(for f in "$TASK"/evidence/*/escalation.md; do [[ -f "$f" ]] && printf ' | %s' "$f"; done)"
     printf 'Verified: criterion | result | evidence type | by | check fixed by\n'
     if [[ -s "$TASK/verified" ]]; then sed 's/^/  /' "$TASK/verified" | tr '\t' '|'; else printf '  none\n'; fi
-    printf 'Check basis: %s\n' "$(if [[ -n "$soft" ]]; then printf 'passed only on a check a worker chose, which the script re-ran but cannot judge for relevance:%s. Give these criteria a check: in the plan to bind them' "$soft"; else printf 'every executed criterion passed a check fixed in the plan, or none was executed'; fi)"
+    printf 'Check basis: %s\n' "$(if [[ -n "$soft" ]]; then printf 'PROVISIONAL for%s: passed only a check a worker chose, which the script re-ran but cannot judge for relevance. Fix a check: (and expect:) for them in the plan to bind them' "$soft"; else printf 'every executed criterion passed a check fixed in the plan, or none was executed'; fi)"
     printf 'Choices: %s\n' "$(if [[ -f "$TASK/decisions.md" ]]; then tr '\n' ' ' < "$TASK/decisions.md"; else printf 'none'; fi)"
     printf 'Unresolved checks/work:'
     out=''
@@ -1646,7 +1741,7 @@ cmd_report() {
     done
     if [[ -s "$TASK/unowned-fail" ]]; then out="$out$(awk -F '\t' '{ printf "\\n  %s: failed and no item owns it", $1 }' "$TASK/unowned-fail")"; fi
     if [[ -n "$out" ]]; then printf '%b\n' "$out"; else printf ' none\n'; fi
-    printf 'Workspace: validated snapshot %s; changes after validation: %s; changes between batches outside any dispatch: %s; files written by the script'"'"'s check re-runs: %s\n' "$(v=$(rget validated ''); printf '%s' "${v:-none}")" "${drift:-none}" \
+    printf 'Workspace: validated snapshot %s; changes after validation: %s; changes between batches outside any dispatch: %s; files written by checks the script re-ran (never accepted silently): %s\n' "$(v=$(rget validated ''); printf '%s' "${v:-none}")" "$(if [[ -n "$snaperr" ]]; then printf 'COULD NOT BE CHECKED'; else printf '%s' "${drift:-none}"; fi)" \
       "$(if [[ -s "$TASK/gap-changes" ]]; then tr '\n' ' ' < "$TASK/gap-changes"; else printf 'none'; fi)" \
       "$(if [[ -s "$TASK/check-writes" ]]; then tr '\n' ' ' < "$TASK/check-writes"; else printf 'none'; fi)"
     printf 'External actions: %s; commands the script ran itself: %s (%s/commands.log); commands it refused to run: %s%s; possibly changing commands in worker records: %s%s. The screen is a heuristic, not proof of no external change\n' "${external:-none reported}" \
@@ -1660,9 +1755,10 @@ cmd_report() {
   } | redact > "$TASK/report.md"
   local started
   started=$(rget started "$(now)")
-  say end run "$(if [[ "$state" == complete ]]; then printf done; elif [[ "$state" == INVALID* ]]; then printf 'ended: the workspace changed after validation'; else printf 'ended with open work'; fi)$(sep)$accepted/$total items accepted$(sep)$unresolved unresolved$(sep)$(elapsed $(( $(now) - started )))$(sep)peak $(rget peak 0) parallel"
+  say end run "$(if [[ "$state" == complete ]]; then printf done; elif [[ "$state" == complete* ]]; then printf 'done, provisional'; elif [[ -n "$snaperr" ]]; then printf 'ended: the workspace could not be checked'; elif [[ "$state" == INVALID* ]]; then printf 'ended: the workspace changed after validation'; else printf 'ended with open work'; fi)$(sep)$accepted/$total items accepted$(sep)$unresolved unresolved$(sep)$(elapsed $(( $(now) - started )))$(sep)peak $(rget peak 0) parallel"
   event report - "$accepted/$total accepted"
   cat "$TASK/report.md"
+  if [[ -n "$snaperr" ]]; then printf 'ledger: the snapshot helper failed, so nothing is known about the workspace now: %s\n' "$snaperr" >&2; exit 3; fi
 }
 
 # ---- init ------------------------------------------------------------------------------------

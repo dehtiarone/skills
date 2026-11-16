@@ -46,7 +46,7 @@ This skill runs only when the user invokes it by name. You are the coordinator: 
    ```
    - In tier C or D, or whenever you would have to read files to plan, plan only `map` items first. Their replies and the `## Plan lines` section of their reports give you the produce items.
    - **Sizing rule:** one behaviour per item; one criterion per item, two at most; owned outputs disjoint from every other item; small enough for one sitting (about five files, one data source, or one account and region). Prefer more, smaller items; merge only when `dispatch` says an item is not admitted.
-   - Give a criterion its `check:` whenever the request or a map report names a command. Without one it can pass only on a check a worker chose, and the report says so. Never write a secret's value into a plan line; name its variable.
+   - Give a criterion its `check:` whenever the request or a map report names a command. Without one it passes only on a check a worker chose, and the report then says `PROVISIONAL`, not `complete`. Never write a secret's value into a plan line; name its variable.
    - Items that share a database, port, cache or generated file get the same `locks: <name>`; they then never run side by side.
    - A slug is 20 characters at most and names the purpose (`fix-parser`, not `item-3`). Validators are added for you.
 3. **Loop until a `next:` line says `report`:**
@@ -93,7 +93,7 @@ For each `dispatch` block make one `Agent` call with `subagent_type: "general-pu
 
 ## Evidence
 
-Each criterion has an ID and one evidence type; a record must use that same type, and weaker evidence never satisfies a stronger criterion. A PASS means the command exits 0 and is more than fixed text; a required check that was not run is never a pass; the script never runs a command that may change an external system. Re-run by the script: `behavioral`, `static`, `parse`, `format`, `schema`, `reconciliation`, `recompute`. Saved output or copy checked by the script: `command-output`, `source`. Cited location checked by the script: `inspection`. Choose the strongest type the work allows; `references/evidence.md` lists which fits which kind of task.
+Each criterion has an ID and one evidence type; a record must use that same type, and weaker evidence never satisfies a stronger criterion. A PASS means the command exits 0 and is more than fixed text; a plan `check:` is judged only by its own run; a required check that was not run is never a pass. The script refuses commands it recognises as changing an external system and, in an infra run, every command the plan did not fix: a screen, not a sandbox. Re-run by the script: `behavioral`, `static`, `parse`, `format`, `schema`, `reconciliation`, `recompute`. Saved output or copy checked by the script: `command-output`, `source`. Cited location checked by the script: `inspection`. Choose the strongest type the work allows; `references/evidence.md` lists which fits which kind of task.
 
 ## Progress log
 

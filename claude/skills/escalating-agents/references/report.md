@@ -8,15 +8,15 @@ Kind: [code/infra/data]
 Coordinator: [parent model/effort as given to init]
 Outcome: [items accepted, unresolved, units used of budget; state: complete, incomplete (why), or INVALID when the workspace changed after validation]
 Ledger: [stage/item | take | level | requested | ran | batch | elapsed | outcome | class | failure | units]
-Pinning: [Verified / Requested but unverified / Known mismatch with cause, and the user's words if they accepted it; calls that ran on other settings]
+Pinning: [Verified / Requested; model generation unverified / Requested but unverified / Known mismatch with cause, and the user's words if they accepted it; calls shown exactly, by alias only, on other settings]
 Parallelism: [batches | peak concurrent | elapsed per batch | no savings claim without a serial baseline]
 Effort distribution (requested): [cheap low / medium / high; expensive]
 Escalations: [effort steps; model steps, each with its escalation.md]
 Verified: [criterion | result | evidence type | who verified it on which snapshot | check fixed by plan or worker]
-Check basis: [criteria that passed only on a check a worker chose]
+Check basis: [criteria that are PROVISIONAL: passed only on a check a worker chose]
 Choices: [decisions]
 Unresolved checks/work: [items stopped or unverified, or none]
-Workspace: [validated snapshot; changes after validation; accepted changes outside any dispatch; files the script's check re-runs wrote]
+Workspace: [validated snapshot; changes after validation; accepted changes outside any dispatch; files written by checks the script re-ran]
 External actions: [as reported; commands the script ran, refused to run, and flagged in worker records]
 Not covered by snapshots: external systems, ignored files
 Secrets: [none detected, or the files that hold one; values are withheld; detection is not a guarantee]
@@ -31,4 +31,4 @@ Rules for what you add around it:
 - Make no time or cost savings claim without a measured serial baseline.
 - Report actual external actions, not what was authorised.
 - If `Secrets` lists files, tell the user before sharing anything from `TASK`.
-- `state: complete` is the only success. Relay `incomplete` and `INVALID` as they are; a criterion listed under `Check basis` is verified only as far as a worker-chosen check goes, so say that when you summarise.
+- `state: complete` is the only success. `complete, PROVISIONAL` means every item was accepted but the listed criteria passed only a check a worker chose: say exactly that, never "done". Relay `incomplete` and `INVALID` as they are. If `report` exits non-zero the workspace could not be compared with the validated state: nothing is known about it.

@@ -48,7 +48,9 @@ At every batch close the script compares the workspace with the batch's owned ou
 
 ## Files changed outside any dispatch (`drift`)
 
-Before every batch the script compares the workspace with what the last batch left. If something changed in between (the user edited a file, you committed, a late worker wrote), it dispatches nothing and prints the paths. It never reverts them and neither do you. If the change is expected, run `LEDGER drift TASK accept "<who changed it and why>"`: the change becomes part of the work, anything validated before is validated again on the new state, and the report names it. If you do not know where it came from, ask the user. Files written by the script's own check re-runs are recorded separately and do not block.
+Before every batch the script compares the workspace with what the last batch left. If something changed in between (the user edited a file, you committed, a late worker wrote), it dispatches nothing and prints the paths. It never reverts them and neither do you. If the change is expected, run `LEDGER drift TASK accept "<who changed it and why>"`: the change becomes part of the work, anything validated before is validated again on the new state, and the report names it. If you do not know where it came from, ask the user. A file written by a check the script re-ran blocks in the same way, and the record that wrote it is rejected: fix the check, or release the path with a plan line `scratch <glob>`.
+
+Changing a criterion's text, type, `check:` or `expect:` in a later plan is new work: every item that owns it starts again at level 1 on the cheap model, and its earlier takes, diagnosis and escalation record stop counting.
 
 ## Stopping
 

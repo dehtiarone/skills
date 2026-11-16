@@ -10,7 +10,7 @@ Rules:
 - Keep working until every one of your criteria is met or you are blocked. Stop at the time limit.
 - Make your final write before your final check, then write nothing more to the workspace.
 
-For each of your criteria, run a check of the criterion's evidence type and record it. A check that did not start, printed nothing, only prints fixed text (`echo ok`), or does not exercise the criterion does not count, and neither does a PASS whose command exits non-zero. A command that may change an external system is never run by the script and never counts. Write one block per criterion to your check record:
+For each of your criteria, run a check of the criterion's evidence type and record it. A check that did not start, printed nothing, only prints fixed text (`echo ok`), or does not exercise the criterion does not count, and neither does a PASS whose command exits non-zero. When a criterion names a check, record exactly that command: only its own exit status and output decide. A check must not change workspace files. A command that may change an external system is never run by the script and never counts. Write one block per criterion to your check record:
 ```
 criterion: C1
 verdict: PASS            (PASS | FAIL | NOT_RUN)

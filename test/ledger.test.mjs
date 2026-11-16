@@ -1,7 +1,7 @@
 // Behaviour of scripts/ledger.sh: first attempts, the effort ladder, the model gate, evidence
 // acceptance, admission, scope checks, the progress log, status and the final report.
 import assert from 'node:assert/strict';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, it } from 'node:test';
 import { block, dispatches, startRun } from '../test-support/run-harness.mjs';
@@ -267,9 +267,6 @@ describe('evidence acceptance', () => {
   it('rejects a validator PASS that is vacuous, unexecuted or weaker than the criterion, and moves that validator up one level', (t) => {
     const cases = [
       [block('C1', 'true', undefined), /C1: no decisive output line quoted/],
-      [block('C1', 'true', 'looks fine'), /C1: true only prints fixed text: it does not exercise the criterion/],
-      [block('C1', 'echo hello, world', 'hello, world'), /C1: echo hello, world only prints fixed text/],
-      [block('C1', 'bin/absent', 'hello, world'), /C1: check could not start: bin\/absent exit 127/],
       [block('C1', 'bin/greet', 'hello, world', { type: 'inspection', cite: 'bin/greet:2' }), /evidence type inspection does not satisfy a behavioral criterion/],
       ['criterion: C9\nverdict: PASS\ntype: behavioral\ncommand: bin/greet\ndecisive: hello, world', /C1 has no block/],
     ];
@@ -300,7 +297,7 @@ describe('evidence acceptance', () => {
     run.record('bye-text', 1, [block('C2', 'test/run.sh', 'ok: suite present')]);
     run.result('produce/greet-text', 'DONE');
     const out = run.result('produce/bye-text', 'DONE');
-    assert.match(out, /✗ failed {3}produce\/greet-text .* C1: named check test "\$\(bin\/greet\)" = "hello, +exit 1 #\d+/);
+    assert.match(out, /✗ failed {3}produce\/greet-text .* C1: test "\$\(bin\/greet\)" = "hello, +exit 1 #\d+/);
     assert.match(out, /✗ failed {3}produce\/bye-text .* C2: output lacks the expected text #\d+/);
     run.dispatch();
     good(run, 'greet-text', 2, 'C1', 'greet', 'hello, world');
@@ -352,10 +349,10 @@ describe('evidence acceptance', () => {
     run.record('checks', 2, [block('C1', 'bin/greet', 'hello, world'), block('C2', 'bin/farewell', 'goodbye, world')]);
     assert.match(run.result('verify/checks', 'PASS'), /✓ passed {3}verify {16}1\/1 validators · 2\/2 criteria · units 5\/24/);
     const report = run.report();
-    assert.match(report, /^■ run {6}done · 2\/2 items accepted · 0 unresolved · \d+:\d\d · peak 2 parallel$/m);
-    assert.match(report, /^Outcome: 2\/2 items accepted, 0 unresolved; 5 units of 24 used; state: complete$/m);
+    assert.match(report, /^■ run {6}done, provisional · 2\/2 items accepted · 0 unresolved · \d+:\d\d · peak 2 parallel$/m);
+    assert.match(report, /^Outcome: 2\/2 items accepted, 0 unresolved; 5 units of 24 used; state: complete, PROVISIONAL \(no check fixed in the plan for: C1 C2\)$/m);
     assert.match(report, /^ {2}C2\|PASS\|behavioral\|verify\/checks take 2 on [a-z]+-[\d-]+\|worker$/m);
-    assert.match(report, /^Check basis: passed only on a check a worker chose, which the script re-ran but cannot judge for relevance: C1 C2\./m);
+    assert.match(report, /^Check basis: PROVISIONAL for C1 C2: passed only a check a worker chose, which the script re-ran but cannot judge for relevance\./m);
   });
 
   it('rejects a validator FAIL the script cannot reproduce', (t) => {
@@ -723,7 +720,7 @@ describe('review regressions', () => {
     run.dispatch();
     // The producer's own check says everything is fine; the plan's check decides.
     run.record('greet-text', 1, [block('C1', 'cat bin/greet', '#!/usr/bin/env bash')]);
-    assert.match(run.result('produce/greet-text', 'DONE'), /✗ failed {3}produce\/greet-text .* C1: named check /);
+    assert.match(run.result('produce/greet-text', 'DONE'), /✗ failed {3}produce\/greet-text .* C1: test "\$\(bin\/greet\)" = "hello, +exit 1 #\d+/);
     const other = startRun(t, { tier: 'D' });
     assert.match(other.planFails(`${oneItem}criterion C2 behavioral | x\nitem produce review | Review it | owns: bin/farewell | criteria: C2`), /slug 'review' is reserved for the validators/);
     assert.equal(existsSync(join(other.task, 'items/produce.greet-text')), false, 'the earlier lines of a rejected plan are rolled back');
@@ -750,14 +747,32 @@ describe('review regressions', () => {
     run.dispatch();
     run.record('audit', 2, record('./tools/bin/aws s3api list-buckets', "psql -c 'select count(*) from orders'", 'aws sts get-caller-identity'));
     run.result('produce/audit', 'DONE', '--ran', 'haiku/medium');
-    assert.match(run.report(), /^Pinning: Known mismatch, accepted by the user \(produce\/audit ran on haiku\/medium instead of haiku\/low; the user: go on, medium is fine\); 1 of 2 call\(s\) shown by the host as run on the requested settings, 1 on other settings$/m);
+    assert.match(run.report(), /^Pinning: Known mismatch, accepted by the user \(produce\/audit ran on haiku\/medium instead of haiku\/low; the user: go on, medium is fine\); 0 of 2 call\(s\) shown by the host as run on the requested model generation and effort, 1 by alias only, 1 on other settings$/m);
 
     const verified = startRun(t, { tier: 'A' });
     verified.plan(oneItem);
     verified.dispatch();
     good(verified, 'greet-text', 1, 'C1', 'greet', 'hello, world');
     verified.result('produce/greet-text', 'DONE', '--ran', 'claude-haiku-5-5/low');
-    assert.match(verified.report(), /^Pinning: Verified; 1 of 1 call\(s\) shown by the host as run on the requested settings, 0 on other settings$/m);
+    assert.match(verified.report(), /^Pinning: Verified; 1 of 1 call\(s\) shown by the host as run on the requested model generation and effort, 0 by alias only, 0 on other settings$/m);
+    // The bare alias does not show which generation ran; an older generation is a mismatch.
+    const alias = startRun(t, { tier: 'A' });
+    alias.plan(oneItem);
+    alias.dispatch();
+    good(alias, 'greet-text', 1, 'C1', 'greet', 'hello, world');
+    alias.result('produce/greet-text', 'DONE', '--ran', 'haiku/low');
+    assert.match(alias.report(), /^Pinning: Requested; model generation unverified \(1 call\(s\) shown by alias only\); 0 of 1 /m);
+    const older = startRun(t, { tier: 'A' });
+    older.plan(oneItem);
+    older.dispatch();
+    good(older, 'greet-text', 1, 'C1', 'greet', 'hello, world');
+    assert.match(older.result('produce/greet-text', 'DONE', '--ran', 'claude-haiku-4-5/low'), /\(requested haiku\/low, ran claude-haiku-4-5\/low\)/);
+    assert.match(older.report(), /^Pinning: Known mismatch \(produce\/greet-text ran on claude-haiku-4-5\/low instead of haiku\/low\); 0 of 1 /m);
+    const codex = startRun(t, { tier: 'A', host: 'codex' });
+    codex.plan(oneItem);
+    codex.dispatch();
+    good(codex, 'greet-text', 1, 'C1', 'greet', 'hello, world');
+    assert.match(codex.result('produce/greet-text', 'DONE', '--ran', 'gpt-6-luna-mini/low'), /ran gpt-6-luna-mini\/low/);
 
     const hidden = startRun(t, { host: 'codex' });
     assert.match(hidden.init, /pinning: requested, unverified \(nothing to check from here on this host\)/);
@@ -821,7 +836,8 @@ describe('second review regressions', () => {
     run.result('verify/checks', 'PASS');
     const report = run.report();
     assert.match(report, /^ {2}C1\|PASS\|behavioral\|verify\/checks take 2 on \S+\|worker$/m);
-    assert.match(report, /^Check basis: passed only on a check a worker chose, .*: C1\. Give these criteria a check: in the plan to bind them$/m);
+    assert.match(report, /^Check basis: PROVISIONAL for C1: passed only a check a worker chose, /m);
+    assert.match(report, /state: complete, PROVISIONAL \(no check fixed in the plan for: C1\)$/m);
     const bound = startRun(t);
     produced(bound);
     bound.dispatch();
@@ -875,7 +891,7 @@ describe('second review regressions', () => {
     run.write('report.txt', 'two buckets\n');
     run.record('inventory', 1, [block('C1', 'tools/aws s3api delete-bucket', 'removed'), block('C2', 'tools/aws s3api get-bucket-versioning', 'removed')]);
     const out = run.result('produce/inventory', 'DONE');
-    assert.match(out, /C1: not run: the command may change an external system; C2: not run: a/);
+    assert.match(out, /C1: not run: the command may change an external system; C2: not run: i/);
     assert.equal(existsSync(marker), false, 'the script did not run the worker’s command');
     const report = run.report();
     assert.match(report, /commands the script ran itself: 0 .*; commands it refused to run: 2 .*\. The screen is a heuristic, not proof of no external change$/m);
@@ -958,14 +974,26 @@ describe('second review regressions', () => {
     assert.match(again, /^■ run {6}ended: the workspace changed after validation · /m);
   });
 
-  it('records files the script’s own check re-runs wrote instead of treating them as an outside change', (t) => {
+  it('rejects a check that writes workspace files instead of absorbing the write into the accepted state', (t) => {
+    const plan = (extra = '') => `${extra}criterion C1 behavioral | greets | check: bin/greet > cache.out; cat cache.out | expect: hello, world\nitem produce greet-text | Fix it | owns: bin/greet | criteria: C1`;
     const run = startRun(t);
-    run.plan('criterion C1 behavioral | greets | check: bin/greet > cache.out; cat cache.out | expect: hello, world\nitem produce greet-text | Fix it | owns: bin/greet | criteria: C1');
+    run.plan(plan());
     run.dispatch();
     good(run, 'greet-text', 1, 'C1', 'greet', 'hello, world');
-    run.record('greet-text', 1, [block('C1', 'bin/greet > cache.out; cat cache.out', 'hello, world')]);
-    assert.match(run.result('produce/greet-text', 'DONE'), /^note: re-running the recorded checks wrote files: cache\.out /m);
-    assert.equal(dispatches(run.dispatch())[0].item, 'verify/checks', 'no drift block for the script’s own writes');
+    const out = run.result('produce/greet-text', 'DONE');
+    assert.match(out, /✗ failed {3}produce\/greet-text .* a check changed workspace files \(cache\.out\): checks may write only to/);
+    assert.doesNotMatch(out, /✓ done/);
+    const refused = run.dispatch();
+    assert.match(refused, /^✗ failed {3}workspace {13}changed outside any dispatch: cache\.out/m);
+    assert.match(refused, /^next: nothing was dispatched\. A check the script re-ran wrote files \(cache\.out ?\): .* plan line: scratch GLOB\. /m);
+    assert.match(run.report(), /files written by checks the script re-ran \(never accepted silently\): cache\.out/);
+    // The plan may release a path for checks to write.
+    const released = startRun(t);
+    released.plan(plan('scratch cache.out\n'));
+    released.dispatch();
+    good(released, 'greet-text', 1, 'C1', 'greet', 'hello, world');
+    assert.match(released.result('produce/greet-text', 'DONE'), /✓ done {5}produce\/greet-text/);
+    assert.equal(dispatches(released.dispatch())[0].item, 'verify/checks');
   });
 
   it('frees the reservation of stopped items, and keeps a declared limit below the host’s slots', (t) => {
@@ -1010,5 +1038,146 @@ describe('second review regressions', () => {
     const cont = kept.dispatch();
     assert.equal(dispatches(cont)[0].continue, 'same-worker');
     assert.match(cont, /^note: produce\/greet-text continues in worker agent-7f3a; if that worker is gone, start a new one with the same two lines$/m);
+  });
+});
+
+describe('third review regressions', () => {
+  it('judges a plan check only by its own output, whatever else the worker ran or printed', (t) => {
+    for (const tier of ['A', 'B']) {
+      const run = startRun(t, { tier, plain: tier === 'A' });
+      run.plan('criterion C1 behavioral | bin/greet prints correct | check: bin/greet | expect: correct\nitem produce greet-text | Fix it | owns: bin/greet | criteria: C1');
+      run.dispatch();
+      run.setScript('greet', 'WRONG');
+      run.record('greet-text', 1, [block('C1', 'bin/greet; echo correct', 'correct')]);
+      const out = run.result('produce/greet-text', 'DONE');
+      assert.match(out, /✗ failed {3}produce\/greet-text .* C1: output lacks the expected text #\d+/, tier);
+      assert.doesNotMatch(out, /✓ (done|passed)/, tier);
+      assert.match(run.report(), /state: incomplete/, tier);
+    }
+  });
+
+  it('sees through a shell wrapper around fixed text, and a missing command is not a result', (t) => {
+    for (const [command, reason] of [
+      ["bash -c 'echo correct'", /only prints fixed text/],
+      ['sh -c "printf correct"', /only prints fixed text/],
+      ["eval 'echo correct'", /only prints fixed text/],
+      ['true', /only prints fixed text/],
+      ['bin/absent', /check could not start: bin\/absent exit 127/],
+    ]) {
+      const run = startRun(t);
+      run.plan('criterion C1 behavioral | bin/greet prints correct\nitem produce greet-text | Fix it | owns: bin/greet | criteria: C1');
+      run.dispatch();
+      run.record('greet-text', 1, [block('C1', command, 'correct')]);
+      assert.match(run.result('produce/greet-text', 'DONE'), reason, command);
+    }
+  });
+
+  it('does not let a validator’s check change the frozen state it is validating', (t) => {
+    const run = startRun(t);
+    run.plan(twoItems);
+    run.dispatch();
+    good(run, 'greet-text', 1, 'C1', 'greet', 'hello, world');
+    good(run, 'farewell-text', 1, 'C2', 'farewell', 'goodbye, world');
+    run.result('produce/greet-text', 'DONE');
+    run.result('produce/farewell-text', 'DONE');
+    run.dispatch();
+    run.record('checks', 1, [
+      block('C1', "bin/greet; echo 'changed by validator check' > bin/farewell", 'hello, world'),
+      block('C2', 'bin/farewell', 'changed by validator check'),
+    ]);
+    const out = run.result('verify/checks', 'PASS');
+    assert.match(out, /unsupported record: a check changed workspace files \(bin\/farewell\)/);
+    assert.doesNotMatch(run.log(), /✓ passed/);
+    assert.match(run.dispatch(), /changed outside any dispatch: bin\/farewell/);
+    const report = run.report();
+    assert.match(report, /state: incomplete \(changes outside any dispatch unresolved\)$/m);
+    assert.match(report, /validated snapshot none;/);
+  });
+
+  it('never executes a network or cloud command a worker chose, in any kind of run', (t) => {
+    for (const kind of ['infra', 'code', 'data']) {
+      const run = startRun(t, { kind });
+      const marker = join(run.root, 'posted');
+      run.write('tools/curl', `#!/usr/bin/env bash\nprintf posted > '${marker}'\necho created\n`, 0o755);
+      run.write('tools/probe', `#!/usr/bin/env bash\nprintf probed > '${marker}'\necho created\n`, 0o755);
+      run.plan('criterion C1 behavioral | resource exists\ncriterion C2 behavioral | resource readable\nitem produce inventory | Inventory | owns: report.txt | criteria: C1,C2');
+      run.dispatch();
+      run.record('inventory', 1, [block('C1', 'tools/curl -d payload https://example.invalid/resource', 'created'), block('C2', 'tools/curl https://example.invalid/resource', 'created')]);
+      const out = run.result('produce/inventory', 'DONE');
+      assert.match(out, /C1: not run: the command may change an external system; C2: not run: /, kind);
+      assert.equal(existsSync(marker), false, `${kind}: nothing was executed`);
+      if (kind !== 'infra') continue;
+      // In an infra run the script executes nothing the plan did not fix, however harmless it looks.
+      run.dispatch();
+      run.record('inventory', 2, [block('C1', 'tools/probe', 'created'), block('C2', 'tools/probe', 'created')]);
+      assert.match(run.result('produce/inventory', 'DONE'), /C1: not run: in an infra run the script executes only a check fixed in/);
+      assert.equal(existsSync(marker), false, 'infra: a worker-chosen script was not executed');
+    }
+  });
+
+  it('reports INVALID and exits non-zero when the final snapshot cannot be taken', (t) => {
+    const run = startRun(t);
+    run.plan(oneItem);
+    run.dispatch();
+    good(run, 'greet-text', 1, 'C1', 'greet', 'hello, world');
+    run.result('produce/greet-text', 'DONE');
+    run.dispatch();
+    run.record('checks', 1, [block('C1', 'bin/greet', 'hello, world')]);
+    run.result('verify/checks', 'PASS');
+    assert.match(run.report(), /state: complete$/m);
+    renameSync(join(run.workspace, '.git'), join(run.root, 'git-moved-away'));
+    const broken = run.ledger('report', run.task);
+    assert.equal(broken.status, 3, broken.stdout);
+    assert.match(broken.stdout, /state: INVALID \(the workspace could not be compared with the validated state: /);
+    assert.match(broken.stdout, /changes after validation: COULD NOT BE CHECKED;/);
+    assert.match(broken.stdout, /^■ run {6}ended: the workspace could not be checked · /m);
+    assert.doesNotMatch(broken.stdout, /state: complete/);
+    assert.match(broken.stderr, /the snapshot helper failed/);
+  });
+
+  it('restarts an item at the cheap model on low when its criterion is replaced, even after the gate opened', (t) => {
+    const run = startRun(t);
+    run.plan(oneItem);
+    for (let take = 1; take <= 3; take++) {
+      run.dispatch();
+      bad(run, 'greet-text', take, 'C1', 'greet', `wrong ${take}`, 'hello, world');
+      run.result('produce/greet-text', 'DONE');
+    }
+    run.dispatch('produce/greet-text', '--narrow', 'only change the echoed text');
+    bad(run, 'greet-text', 4, 'C1', 'greet', 'wrong 4', 'hello, world');
+    run.result('produce/greet-text', 'DONE');
+    assert.equal(run.diagnose('produce/greet-text', ['class: capability', 'reproduced: yes']).status, 0);
+    assert.match(run.ok('gate', run.task, 'produce/greet-text'), /gate 6\/6/);
+    assert.equal(run.field('produce/greet-text', 'level'), '4');
+    const out = run.plan('criterion C1 behavioral | bin/greet prints "good day" | check: bin/greet | expect: good day');
+    assert.match(out, /^note: criterion C1 changed: produce\/greet-text starts again at level 1 \(haiku\/low\); its earlier takes, diagnosis and gate record no longer count$/m);
+    assert.equal(existsSync(run.evidence('greet-text', 'escalation.md')), false, 'the gate record no longer authorises anything');
+    const [d] = dispatches(run.dispatch());
+    assert.deepEqual([d.item, d.model, d.effort], ['produce/greet-text', 'haiku', 'low']);
+    assert.match(run.brief('produce/greet-text', 5), /good day/);
+    // The gate does not count the takes made against the old criterion.
+    bad(run, 'greet-text', 5, 'C1', 'greet', 'wrong 5', 'good day');
+    run.result('produce/greet-text', 'DONE');
+    assert.equal(run.field('produce/greet-text', 'level'), '2');
+    assert.notEqual(run.ledger('gate', run.task, 'produce/greet-text').status, 0);
+    // Sending an unchanged criterion again changes nothing.
+    assert.doesNotMatch(run.plan('criterion C1 behavioral | bin/greet prints "good day" | check: bin/greet | expect: good day'), /changed/);
+    assert.equal(run.field('produce/greet-text', 'level'), '2');
+  });
+
+  it('keeps secrets out of the evidence it writes: worker-chosen checks run without them and output is filtered', (t) => {
+    const secret = 'review_fake_token_12345678901234567890';
+    const run = startRun(t, { env: { REVIEW_API_TOKEN: secret } });
+    writeFileSync(join(run.root, 'held-elsewhere'), `${secret}\n`);
+    run.write('tools/leak', `#!/usr/bin/env bash\ncat '${join(run.root, 'held-elsewhere')}'\necho correct\n`, 0o755);
+    run.plan('criterion C1 behavioral | prints correct\ncriterion C2 behavioral | also correct\nitem produce greet-text | Fix it | owns: bin/greet | criteria: C1,C2');
+    run.dispatch();
+    run.record('greet-text', 1, [block('C1', 'printenv REVIEW_API_TOKEN; bin/greet', 'greet'), block('C2', 'tools/leak', 'correct')]);
+    const out = run.result('produce/greet-text', 'DONE');
+    assert.match(out, /C2: the output of tools\/leak held a secret \(withheld\); the record does/);
+    assert.doesNotMatch(out, /C1:/, 'the worker-chosen check ran without the variable and passed on its own output');
+    for (const c of ['C1', 'C2']) assert.doesNotMatch(readFileSync(run.evidence('greet-text', `take-1.${c}.out`), 'utf8'), new RegExp(secret));
+    assert.match(readFileSync(run.evidence('greet-text', 'take-1.C2.out'), 'utf8'), /\[withheld:REVIEW_API_TOKEN\]\ncorrect/);
+    assert.match(run.report(), /^Secrets: none detected/m);
   });
 });

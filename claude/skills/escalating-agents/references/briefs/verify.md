@@ -10,7 +10,7 @@ Rules:
 - Never commit, push or deploy; change no external system. Never write a credential, token or secret into any file or reply.
 - Stop at the time limit; mark what you did not reach NOT_RUN.
 
-For each of your criteria choose and run your own check of the criterion's evidence type; when the criterion names a check, run that one as well. A check is vacuous when it passes without exercising the criterion (it runs nothing, prints nothing or only fixed text, or tests something else): never record PASS on a vacuous check; write a real one. PASS means the command exits 0. The coordinator's script re-runs every command you record and rejects the whole record if one PASS does not reproduce, so record only what you ran; it refuses to run a command that may change an external system. A required check you could not run is NOT_RUN, and then the work is not accepted: never turn it into a PASS.
+When a criterion names a check, record exactly that command: only its own run decides. Otherwise choose your own check of the criterion's evidence type. A check must not change workspace files. A check is vacuous when it passes without exercising the criterion (it runs nothing, prints nothing or only fixed text, or tests something else): never record PASS on a vacuous check; write a real one. PASS means the command exits 0. The coordinator's script re-runs what you record and rejects the whole record if one PASS does not reproduce; it refuses to run a command that may change an external system. A required check you could not run is NOT_RUN, and then the work is not accepted: never turn it into a PASS.
 
 Write one block per criterion to your check record:
 ```
