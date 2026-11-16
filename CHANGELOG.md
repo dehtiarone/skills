@@ -2,6 +2,8 @@
 
 ## 2.0.0 (unreleased)
 
+Not yet verified by a scored eval run; see `docs/design/escalating-agents-2.0.md`, section 13.
+
 Breaking: one skill, `escalating-agents`, replaces `escalating-subagents` and `cheap-parallel-agents`. The old skill names no longer exist and no aliases are shipped.
 
 ### Migration
@@ -17,8 +19,8 @@ Behaviour differences to expect:
 
 - **Every subagent starts on the cheap model at `low` effort**, in every tier and stage, tier D and validators included. `escalating-subagents` started tier D discovery and validation on Sonnet or Sol; `cheap-parallel-agents` started most work at `medium`. The coordinator no longer chooses a starting level or judges difficulty.
 - **Models:** Haiku 5.5 then Sonnet 5.5 on Claude Code; GPT-6 Luna then GPT-6.1 Terra on Codex. Opus, Sol and every other model are gone from the ladders. Effort is `low`, `medium` or `high` only; the `max` rung is removed.
-- **Effort escalation is automatic**; **model escalation is gated** per item by six recorded conditions and an `escalation.md` file, then gets one take at `high`. `cheap-parallel-agents` never changed model; `escalating-subagents` changed it after one or two failures.
-- **Acceptance is checked by a script.** Records name a command and a line of its output per criterion; the script re-runs the command. The coordinator no longer inspects acceptance records, reads the tier D patch, or reads the snapshot helper.
+- **Effort escalation is automatic**; **model escalation is gated** per item by six recorded conditions and an `escalation.md` file, then gets exactly one take at `high`. `cheap-parallel-agents` never changed model; `escalating-subagents` changed it after one or two failures.
+- **Acceptance is checked by a script.** Records name a command and a line of its output per criterion; the script re-runs the command, and a check fixed in the plan outranks the worker's own. Tier A requires a named check on every criterion. The coordinator no longer inspects acceptance records, reads the tier D patch, or reads the snapshot helper.
 - **Stages are Map → Produce → Verify** (formerly Discover or Map → Implement → Validate), and the skill covers cloud-infrastructure research and data work as well as code, including workspaces that are not git repositories.
 - **Tiers are chosen by consequence**, not by domain.
 - **The progress log has a new format** (`▶ started  produce/fix-parser  take 1/8 · level 1/4 · haiku/low`), printed by the script, with an ASCII fallback.
@@ -40,7 +42,7 @@ Takes per item are new: 8 per produce item and 4 per map or verify item on Claud
 - `scripts/ledger.sh` holds the run: plan, admission, dispatch parameters, results, the effort ladder, the model gate, evidence acceptance, scope checks, the progress log, `status` for resuming after a compaction, and the final report. All run state lives in the task directory.
 - `scripts/agent-snapshot.sh` is a file run by path instead of a block embedded in SKILL.md and extracted with `sed`; the SHA-256 pin is gone with the extraction. New: `init --plain` for directories that are not git repositories, and `checkpoint`, which captures a snapshot, checks changed paths against owned globs and writes the integrated patch in one call.
 - Worker brief templates (`references/briefs/`) are assembled by the script; the coordinator's prompt to a worker is two lines.
-- SKILL.md is 11.6 KB on Claude Code and 12.0 KB on Codex, down from 33.5 KB and 33.9 KB; everything situational moved to `references/`.
+- SKILL.md is 11.8 KB on Claude Code and 12.2 KB on Codex, down from 33.5 KB and 33.9 KB; everything situational moved to `references/`.
 - New evidence types: `source`, `command-output`, `reconciliation`, `recompute`, `schema`. External systems are read-only unless the user authorised an action; recorded commands are scanned for changing verbs and run files for secrets.
 - Codex: `agents/openai.yaml` gains a `default_prompt` and a `short_description` within the documented 25–64 characters.
 
@@ -49,7 +51,7 @@ Takes per item are new: 8 per produce item and 4 per map or verify item on Claud
 - `docs/evidence/frontiercode-2.0-2026-11-16.md`: rows after Cognition's 2026-11-11 rescoring, the cheap-`high` against expensive-model comparison, and the note that GPT-6.1 Terra has no row. `docs/evidence/independent-sources-2026-11-16.md`: every other source with its affiliation check, including sources excluded as affiliated. Earlier evidence files are kept.
 - `docs/design/escalating-agents-2.0.md`: the design, the escalation decision and its evidence, budget arithmetic, measurements and open risks.
 - Tests: byte-identical shared files, enumerated host-specific lines, forbidden models and efforts, numbers against the script and the evidence file, Codex factors within 1.5–2.0, SKILL.md size ceilings, and scenario tests of both scripts.
-- Evals: the suite moves to `claude/evals/escalating-agents/` with the tag `escalating-agents`; the eleven earlier cases are migrated and new cases cover the lowest-effort start, the effort ceiling, the gate, wide dispatch, coordinator context discipline, light coordinators, small-item decomposition, the progress log, resuming, data aggregation, cloud research and a non-git workspace.
+- Evals: the suite moves to `claude/evals/escalating-agents/` with the tag `escalating-agents` (26 cases, 23 invariant graders in each); the eleven earlier cases are migrated and new cases cover the lowest-effort start, the effort ceiling, the gate, wide dispatch, coordinator context discipline, light coordinators, small-item decomposition, the progress log, resuming, data aggregation, cloud research and a non-git workspace.
 
 ## 1.2.0 (2026-11-09)
 

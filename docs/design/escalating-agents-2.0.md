@@ -20,7 +20,7 @@ The coordinator plans criteria and small items, then loops: `dispatch` → start
 Three properties carry the design:
 
 - **Results, not predictions, move an item.** Every first attempt, in every tier and stage, is the cheap model at `low`. The script prints the model and effort; the coordinator has no input into them.
-- **A worker's word is never the evidence.** Each record names, per criterion, a command and one line of its output. The script re-runs the command against the frozen state and compares exit status and output. Saved command output, cited sources and inspections are checked for the quoted line. A missing or unsupported record is an ordinary failure.
+- **A worker's word is never the evidence.** Each record names, per criterion, a command and one line of its output. The script re-runs the command in the workspace right after the batch's snapshot is taken, before anything else is dispatched, and compares exit status and output. A check or expected text the coordinator fixed in the plan outranks the worker's choice, and tier A, which has no validator, requires one. Saved command output, cited sources and inspections are checked for the quoted line. A missing or unsupported record is an ordinary failure.
 - **State is on disk.** Tier, criteria, decisions, items with ownership, levels, takes, budget, snapshots and record paths live under `TASK/`. `ledger.sh status` restores the picture after a compaction.
 
 ## 3. Ladder and model IDs
@@ -34,7 +34,7 @@ Three properties carry the design:
 
 Effort is `low`, `medium` or `high` only. Validators and map items stop at level 3; no gate for moving a validator to the expensive model is defined, because a rejected validator record is cheap to redo and the script, not a stronger validator, establishes the facts.
 
-IDs and accepted efforts were confirmed as API facts: the `haiku` and `sonnet` aliases and the `model` and `effort` parameters of the Agent tool in the Claude Code documentation (sub-agents, model-config, effort); `gpt-6-luna` (efforts `low`–`max`, minimum client 0.155.0) and `gpt-6.1-terra` (efforts `low`–`ultra`, minimum client 0.153.0) in the model catalogue of the installed Codex client 0.169.0, together with `spawn_agent`, `fork_turns` (`all` or `none`), `wait_agent`, `followup_task`, and the `[agents]` keys `default_subagent_model` and `default_subagent_reasoning_effort`. The OpenAI web documentation could not be fetched in this session; the installed client was the source.
+IDs and accepted efforts were confirmed as API facts: the `haiku` and `sonnet` aliases and the `model` and `effort` parameters of the Agent tool in the Claude Code documentation (sub-agents, model-config, effort; per-call `effort` from v2.1.292, `haiku` as Haiku 5.5 from v2.1.293); `gpt-6-luna` (efforts `low`–`max`, `minimal_client_version` 0.155.0) and `gpt-6.1-terra` (efforts `low`–`ultra`, `minimal_client_version` 0.153.0, and a catalogue default multi-agent effort of `xhigh`, which is why the level 4 spawn always carries `reasoning_effort: high` explicitly) in the model catalogue of the installed Codex client 0.169.0, together with `spawn_agent`, `fork_turns` (`all` or `none`), `wait_agent`, `followup_task`, and the `[agents]` keys `default_subagent_model` and `default_subagent_reasoning_effort`. The OpenAI web documentation could not be fetched in this session; the installed client was the source.
 
 ### 3.1 The expensive segment: option (b), one rung at `high`
 
@@ -70,9 +70,11 @@ The skill states that it works under any parent model and gives no recommendatio
 
 ## 4. The model gate
 
-`ledger.sh gate` writes `TASK/evidence/<item>/escalation.md` and moves the item to level 4 only if all six hold: (1) the cheap model's top effort was tried and the minimum cheap takes were used, 4 on Claude Code and 5 on Codex; (2) every retry carried a correction citing the prior record; (3) the failure is classified `capability`; (4) it is confirmed independently by a check the script re-ran or by a reproduced validator FAIL; (5) narrowing was tried once and failed, or is recorded as impossible; (6) the budget admits the expensive call and the validation after it.
+`ledger.sh gate` writes `TASK/evidence/<item>/escalation.md`, prints the six conditions, and moves the item to level 4 only if all hold: (1) the cheap model's top effort was tried and the minimum cheap takes were used, 4 on Claude Code and 5 on Codex; (2) every retry carried its own correction citing the prior record, and none merely repeated the previous instruction; (3) the failure is classified `capability` by a diagnosis file or a validator, never by the failing worker; (4) it is confirmed independently by a check the script itself re-ran and saw fail, or by a reproduced validator FAIL; (5) narrowing was tried once and failed, or is recorded as impossible; (6) the same admission formula `dispatch` uses admits the expensive call, so a passed gate is never refused at dispatch.
 
-Conditions 1, 2, 4, 5 and 6 are computed from the ledger. Condition 3 needs a judgment, which is delegated: a cheap read-only `map` item diagnoses the failure and writes `class: …` in its report, and `ledger.sh classify` reads the class from that file. The coordinator cannot assert it. Narrowing before the gate follows ADaPT's finding that decomposing after a failure beats retrying.
+Conditions 1, 2, 4, 5 and 6 are computed from the ledger. Condition 3 needs a judgment, which is delegated: a cheap read-only `map` item diagnoses the failure and writes `class: …`, `reproduced: …` and `command: …` in its report; `ledger.sh classify` reads the class from that file and re-runs the command before it counts the failure as reproduced. Neither the coordinator nor the failing worker can assert it. A record that was merely missing or malformed confirms nothing.
+
+The level 4 take is one take: any failure there stops the item, with no continuation or retry at that price (an environment failure or an ambiguity blocks it instead). Its brief is a separate template that starts from the task rather than from the narrowed scope. Narrowing before the gate follows ADaPT's finding that decomposing after a failure beats retrying.
 
 The Codex minimum is 5 because Luna's `high` adds little over `medium`, so one failed `high` take says less; a second corrected take is required before paying for Terra.
 
@@ -106,7 +108,7 @@ Evidence for the factor is indirect: Luna's first-take failure rate at `low`, it
 
 **Admission.** `used + this batch + first takes owed to other items + validators still to run + reserve ≤ budget`, item by item. The reserve (`1 + V`) is held until the first validation FAIL and then spent. A level 4 call is an ordinary, dearer item, so the old "after a FAIL on r items" cases fall out of the same formula: retries that do not fit stop their item unresolved, and validation is never run on an unchanged patch.
 
-**No-progress detection**, applied by the script: the same signature twice at one level moves the item up instead of retrying; the same signature at all three cheap levels and again after narrowing stops the item as stuck rather than sending it to the gate; environment retries are capped at two; take limits and the budget stop the rest. A stuck run ends after a handful of units, whatever the budget. Signatures for script-detected failures include a checksum of the check's output, so different wrong results do not look like the same failure.
+**No-progress detection**, applied by the script: the same signature twice at one level moves the item up instead of retrying; the same signature at all three cheap levels and again after narrowing stops the item as stuck rather than sending it to the gate; environment retries are capped at two; take limits and the budget stop the rest. A stuck run ends after a handful of units, whatever the budget. Signatures for script-detected failures include a checksum of the check's output, so different wrong results do not look like the same failure. Validators are not dispatched again while the workspace is unchanged since their last FAIL; a failed criterion no item owns (a review finding) blocks verification until a fix is planned; a stopped validator ends verification with the work reported as unverified; and take limits are enforced at dispatch for every item.
 
 ## 6. Parallelism
 
@@ -145,11 +147,11 @@ Loading plan: SKILL.md always. Tier A or B code task: nothing else. `kind-infra.
 
 | Measure | 1.2.0 | 2.0.0 |
 | ------- | ----- | ----- |
-| Largest SKILL.md | 33,928 B (about 8,500 tokens), 337 lines | 11,960 B Codex, 11,586 B Claude (about 3,000 tokens), 111 lines |
-| Loaded for a tier B code run | 33,468 B | 11,586 B |
-| Loaded for a tier D code run, no failures | 33,468 B | 15,302 B (SKILL.md, `tiers.md`, `kind-code.md`) |
-| Loaded for a tier D run with a gate | 33,468 B | 19,909 B (adds `triage.md`) |
-| Coordinator text per brief | 15 required fields; about 1,500–2,500 B (estimate, no trace kept) | two lines, about 300 B, plus one plan line per item |
+| Largest SKILL.md | 33,928 B (about 8,500 tokens), 337 lines | 12,155 B Codex, 11,822 B Claude (about 3,000 tokens), 108 and 111 lines |
+| Loaded for a tier B code run | 33,468 B | 11,822 B |
+| Loaded for a tier D code run, no failures | 33,468 B | 15,538 B (SKILL.md, `tiers.md`, `kind-code.md`) |
+| Loaded for a tier D run with a gate | 33,468 B | 21,083 B (adds `triage.md`) |
+| Coordinator text per brief | 15 required fields; about 1,500–2,500 B (estimate, no trace kept) | two lines, 316 B in the live run, plus one plan line per item |
 
 Byte counts are measured; token counts assume four bytes per token. Claude Code re-attaches an invoked skill after compaction up to 5,000 tokens, so the whole SKILL.md survives.
 
@@ -159,7 +161,8 @@ The format follows the brief's proposal with these decisions:
 
 - `units` replaces `calls` in budget fields, because calls are cost-weighted.
 - A batch of two or more prints one `batch` line and no per-worker `started` lines, on both hosts: both hosts show running subagents in their own interface, and each relayed line costs coordinator output. A single dispatch prints its `started` line. Every `started` line is still written to `TASK/log.txt`.
-- A produce item's `done` line is printed at batch close, after the script has re-run its checks on the frozen state, so a line never says `done` for work that then fails.
+- A produce item's `done` line is printed at batch close, after the script has re-run its checks, so a line never says `done` for work that then fails.
+- A `model` line carries the failure that led to it, then `gate 6/6` and the record's file name.
 - Symbols default to Unicode in a UTF-8 locale and to the ASCII set otherwise, detected by the script on both hosts; `--ascii` forces it.
 
 ## 10. Host differences
@@ -170,7 +173,8 @@ Checked against current host behaviour:
 
 - Claude Code: `general-purpose` for every worker; `Explore` denies Write, so it cannot write its report file; a fork inherits the parent; subagents run in the background by default and validators are run in the foreground; the concurrency error text starts "Concurrent subagent limit reached"; per-call `model` outranks a subagent definition's `model`, which outranks `CLAUDE_CODE_SUBAGENT_MODEL`; `CLAUDE_CODE_EFFORT_LEVEL` outranks per-call effort.
 - Pinned subagent definitions (`agents/*.md` with `model: haiku`) are not shipped: the per-call parameter already wins, a definition fixes one effort so six files would be needed, and users who copy `skills/` alone would not get them. `pinning.md` mentions them as an option.
-- Codex: `fork_turns: "none"` always; the advertised slot count is passed as `--slots`; role files and `[agents]` defaults are shown as a fallback in `pinning.md`, not shipped.
+- Codex: `fork_turns: "none"` always; the advertised slot count is passed as `--slots`; role files and `[agents]` defaults are shown as a fallback in `pinning.md`, not shipped. The script prints `reasoning_effort=` on Codex and `effort=` on Claude Code, and marks validators with `barrier=yes` instead of a host-specific background flag.
+- Pinning verdicts are derived, not asserted: Known mismatch from the environment preflight, from `ledger.sh pinning TASK mismatch`, or from any `--ran` that differs; Verified only when every call's `--ran` equals the request.
 
 Vendor guidance followed (how to write a skill, not performance evidence): Anthropic, "Skill authoring best practices" (<https://platform.claude.com/docs/en/agents-and-tools/agent-skills/best-practices>) and Claude Code "Skills" (<https://code.claude.com/docs/en/skills>): body under 500 lines, third-person description of what and when, references one level deep from SKILL.md, scripts executed rather than read, no time-sensitive content, one term per concept, checklists and feedback loops. The Agent Skills specification (<https://agentskills.io/specification>): `name` matches the directory, description up to 1,024 characters, `scripts/`, `references/`, instructions under 5,000 tokens. OpenAI's `skill-creator` guidance shipped with the Codex client: include only what changes decisions, keep discovery cheap, disclose detail progressively, use `scripts/` where deterministic execution improves reliability, keep `agents/openai.yaml` consistent with the skill, `short_description` of 25–64 characters, `default_prompt` naming `$skill`.
 
@@ -188,9 +192,19 @@ One conflict: OpenAI's guidance says to avoid tests that "merely match generated
 
 ## 12. Open risks
 
-1. **The ledger script is large** (about 1,250 lines of Bash 3.2). It is covered by scenario tests, but a bug in it is a bug in every run. Its verdict lines are the interface; the coordinator has no fallback if it fails, other than reporting the failure.
-2. **Re-running recorded commands** executes strings written by a cheap worker, in the coordinator's sandbox. That is the same trust a validator already had, but it now happens in the parent's process. The changing-verb scan is a heuristic, not a sandbox.
+1. **The ledger script is large** (about 1,400 lines of Bash 3.2). It is covered by scenario tests, but a bug in it is a bug in every run. Its verdict lines are the interface; the coordinator has no fallback if it fails, other than reporting the failure.
+2. **Re-running recorded commands** executes strings written by a cheap worker, in the coordinator's sandbox. That is the same trust a validator already had, but it now happens in the parent's process. The changing-verb scan is a heuristic, not a sandbox: it can miss a changing command and can flag a read-only one. A check that writes non-ignored files shows up as a change after validation.
 3. **The `low` start on Codex** may cost time without saving money on hard items (section 3.2).
 4. **Terra's rung, the Codex factors and the writer ceiling** rest on indirect evidence and are labelled initial recommendations to evaluate.
 5. **Decisive-line checking can be gamed** by a check that prints a fixed line without exercising the criterion. Validators are told to reject vacuous checks and tier D adds a reviewer, but the script cannot detect a well-formed vacuous check.
-6. **Weak coordinators** have been considered in the design but measured only by the eval suite; see the PR for which coordinator models were actually run.
+6. **Weak coordinators** have been designed for but not observed: see section 13.
+7. **A scope rejection fails every item of its batch**, because the scope check cannot tell which worker strayed.
+
+## 13. Verification status at release
+
+- `node --test`: passes (Node 24, Bash 3.2, Git 2.54, macOS). Node 22 and the Linux and oldest-Git jobs run in CI only.
+- `claude plugin validate ./claude`: passes, with the existing missing-icon warning.
+- `claude plugin eval`: **not run**. The only `claude` CLI on the authoring machine was not logged in, and an unauthenticated eval scores zero. No eval trace exists, so coordinator turns, peak context and compactions under `sonnet` and `haiku` coordinators are **not measured**.
+- One live run outside the eval harness: the tier B fixture with real `haiku`/`low` workers under a Fable coordinator. Three produce items and one validator, four calls, every first take accepted after the script re-ran the checks, 4 of 24 units, eleven coordinator tool calls, worker replies of four to six lines. The `low` validator made a stray workspace edit and reverted it; the scope check confirmed no change. One run, one coordinator model: an existence proof, not a measurement.
+- Codex: nothing was run. Identifiers come from the installed client's catalogue and tool descriptions.
+- Two independent reviews (requirements, and drift between hosts) were run on the finished branch; their findings are fixed in this release, with regression tests in `test/ledger.test.mjs`.

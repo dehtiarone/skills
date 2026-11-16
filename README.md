@@ -46,13 +46,13 @@ Validators and read-only map items never use the expensive model. There is no th
 Moving up in effort is easy: one failed take is enough, and at the lowest level it needs no diagnosis. Moving one item to the expensive model is hard. The script allows it only when all six of these are on record, and it writes them to `TASK/evidence/<item>/escalation.md` before any expensive dispatch:
 
 1. The cheap model was tried at its top effort, and at least four cheap takes were used (five on Codex).
-2. Every retry carried a correction that cites the previous attempt's record.
-3. The failure is a capability failure, as diagnosed by a separate read-only worker. An omission, a broken environment, a flaky or empty check, an unclear specification or an ownership conflict never escalates the model.
-4. The failure is confirmed independently: a failing check the script re-ran, or a fresh validator's reproduced FAIL. A worker's own claim is not enough.
+2. Every retry carried its own correction that cites the previous attempt's record; repeating the previous instruction does not count.
+3. The failure is a capability failure, as diagnosed by a separate read-only worker or reported by a validator; the failing worker's own word does not count. An omission, a broken environment, a flaky or empty check, an unclear specification or an ownership conflict never escalates the model.
+4. The failure is confirmed independently: a check the script itself re-ran and saw fail, or a fresh validator's reproduced FAIL. A worker's own claim, or a record that is merely missing, is not enough.
 5. Making the item smaller was tried once and failed, or is recorded as impossible.
-6. The budget still covers the expensive call and the validation after it.
+6. The budget still covers the expensive call, the validation after it and the reserve, by the same formula every dispatch uses.
 
-The expensive model then gets one take at `high`. Restarting it at `low` was rejected on independent evidence: Sonnet 5.5 at `low` and `medium` scores below Haiku 5.5 at `high` on coding. Status of that evidence: solid for the Claude pair on coding; GPT-6.1 Terra has no FrontierCode row, so its rung rests on Artificial Analysis and is an initial recommendation to evaluate; for research and data work every coding number is only a proxy.
+The expensive model then gets exactly one take at `high`, from a fresh brief; if that fails, the item stops unresolved. Restarting it at `low` was rejected on independent evidence: Sonnet 5.5 at `low` and `medium` scores below Haiku 5.5 at `high` on coding. Status of that evidence: solid for the Claude pair on coding; GPT-6.1 Terra has no FrontierCode row, so its rung rests on Artificial Analysis and is an initial recommendation to evaluate; for research and data work every coding number is only a proxy.
 
 ## Budgets
 
@@ -60,7 +60,7 @@ A cheap call costs 1 unit; an expensive call costs 8 on Claude Code and 4 on Cod
 
 | Tier | Chosen when                                                                                                  | Claude Code budget | Codex budget | Validators |
 | ---- | ------------------------------------------------------------------------------------------------------------ | ------------------ | ------------ | ---------- |
-| A    | one trivial, fully specified, reversible item with a concrete check                                          | 14                 | 21           | none: the script re-runs the check |
+| A    | one trivial, fully specified, reversible item whose check the request names                                  | 14                 | 21           | none: the script runs the named check |
 | B    | a clear task that can be planned from the request                                                            | 24                 | 36           | 1          |
 | C    | unknown scope or cause, or a substantial task; the default                                                   | 30                 | 50           | 1          |
 | D    | production or shared systems, irreversible or costly changes, secrets or personal data, numbers people act on | 36                 | 64           | 2          |
@@ -109,7 +109,7 @@ Everything under a skill directory except `SKILL.md`, `references/pinning.md` an
 
 - Bash 3.2+ and Git 2.31+
 - macOS or Linux; Windows only via WSL
-- A host with subagent tooling: Claude Code 2.1.293+ (Agent tool with `model` and `effort`), or Codex 0.155.0+ with multi-agent tools. Not for claude.ai chat.
+- A host with subagent tooling: Claude Code 2.1.293+ (Agent tool with `model` and `effort`, and `haiku` resolving to Haiku 5.5), or Codex 0.155.0+ with multi-agent tools. Not for claude.ai chat.
 
 ## Install
 
@@ -127,7 +127,7 @@ Codex, for all projects:
 cp -R codex/skills/escalating-agents ~/.agents/skills/
 ```
 
-For one project only, copy into that repository's `.claude/skills/` or `.agents/skills/` instead. Claude Code can also load `claude/` as a plugin (`claude --plugin-dir ./claude`).
+For one project only, copy into that repository's `.claude/skills/` or `.agents/skills/` instead. Claude Code can also load `claude/` as a plugin (`claude --plugin-dir ./claude`). The skill pre-approves its own `ledger.sh` calls for the turn that invokes it; for runs that span several of your messages, add a permanent allow rule for that script if you do not want to be asked.
 
 ## Behavioural evals
 
@@ -137,7 +137,7 @@ For one project only, copy into that repository's `.claude/skills/` or `.agents/
 claude plugin eval ./claude --tag escalating-agents --model sonnet --scaffold --trust-plugin --allow-tools Write Edit "Bash(*)" SendMessage --ablation none --runs 3 --keep-temp
 ```
 
-Repeat with `--model haiku`: the skill must hold under a light coordinator. The suite's README explains the graders, the seeded failures and the pinning cases. Three runs per case is a smoke level of evidence. Codex scenarios are a manual checklist in `codex/evals/escalating-agents/README.md`.
+Repeat with `--model haiku`: the skill must hold under a light coordinator. The suite's README explains the graders, the seeded failures and the pinning cases. Three runs per case is a smoke level of evidence. No scored run has been recorded for 2.0.0 yet (the design note, section 13, says what was verified and how). Codex scenarios are a manual checklist in `codex/evals/escalating-agents/README.md`.
 
 ## Test
 
