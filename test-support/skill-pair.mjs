@@ -1,17 +1,9 @@
-// Shared assertions for skills that ship one variant per host (claude/, codex/).
+// Shared helpers for a skill that ships one variant per host (claude/, codex/).
 // Lives outside test/ because `node --test` also runs every .mjs under a test/ directory.
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import {
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  readdirSync,
-  rmSync,
-  writeFileSync,
-} from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -20,56 +12,37 @@ import { describe, it } from 'node:test';
 
 export const hosts = ['claude', 'codex'];
 export const repoRoot = fileURLToPath(new URL('..', import.meta.url));
+export const skillName = 'escalating-agents';
 
-export function skillPath(host, skill) {
-  return join(repoRoot, host, 'skills', skill, 'SKILL.md');
+export function skillDir(host, skill = skillName) {
+  return join(repoRoot, host, 'skills', skill);
 }
 
-/** Load both host variants of a skill together with their embedded snapshot script. */
-export function loadPair(skill) {
+export function skillPath(host, skill = skillName) {
+  return join(skillDir(host, skill), 'SKILL.md');
+}
+
+/** Load both host variants of a skill's SKILL.md. */
+export function loadPair(skill = skillName) {
   return hosts.map((host) => {
     const path = skillPath(host, skill);
-    const document = readFileSync(path, 'utf8');
-    const blocks = [
-      ...document.matchAll(
-        /<!-- agent-snapshot:start -->\s*```bash\n([\s\S]*?)```\s*<!-- agent-snapshot:end -->/g,
-      ),
-    ];
-    assert.equal(blocks.length, 1, `${host}/${skill}: exactly one embedded snapshot script`);
-    return { host, skill, path, document, script: blocks[0][1] };
+    return { host, skill, path, dir: skillDir(host, skill), document: readFileSync(path, 'utf8') };
   });
 }
 
-export function assertIdenticalScripts(skills) {
-  for (const entry of skills.slice(1)) {
-    assert.equal(entry.script, skills[0].script, `${entry.host}/${entry.skill}: script differs`);
+/** Every file under a directory, as sorted relative paths. */
+export function listFiles(directory) {
+  const out = [];
+  function walk(path, prefix = '') {
+    for (const entry of readdirSync(path, { withFileTypes: true })) {
+      if (entry.name === '.DS_Store') continue;
+      const relative = `${prefix}${entry.name}`;
+      if (entry.isDirectory()) walk(join(path, entry.name), `${relative}/`);
+      else if (entry.isFile()) out.push(relative);
+    }
   }
-}
-
-export function assertPinnedHashAndExtraction(skills, t) {
-  const root = mkdtempSync(join(tmpdir(), 'agent-snapshot-extract-'));
-  t.after(() => rmSync(root, { recursive: true, force: true }));
-  for (const { host, skill, path, document, script } of skills) {
-    const digest = createHash('sha256').update(script).digest('hex');
-    assert.equal(
-      document.match(/Its SHA-256 .*? must be `([0-9a-f]{64})`/)?.[1],
-      digest,
-      `${host}/${skill}: pinned SHA-256`,
-    );
-    const command = document
-      .split('\n')
-      .find((line) => line.startsWith("sed -n '/^<!-- agent-snapshot:start"));
-    assert.ok(command, `${host}/${skill}: extraction command`);
-    const task = join(root, `${host}-${skill}`);
-    mkdirSync(task);
-    const shell = command.replace(' SKILL ', () => ' "$1" ').replace(' TASK/', () => ' "$2"/');
-    success(execute('bash', ['-c', shell, 'extract', path, task], root));
-    assert.equal(
-      readFileSync(join(task, 'agent-snapshot.sh'), 'utf8'),
-      script,
-      `${host}/${skill}: extracted bytes`,
-    );
-  }
+  walk(directory);
+  return out.sort();
 }
 
 /**
@@ -93,21 +66,6 @@ export function assertSharedText(skills, rules) {
       `${entry.host}/${entry.skill}: differs from ${first.host} outside host-specific lines`,
     );
   }
-}
-
-/** Register the three pair tests every two-host skill needs. */
-export function pairSuite(skills, rules) {
-  it('embeds identical standalone scripts in both skills', () => {
-    assertIdenticalScripts(skills);
-  });
-
-  it('pins the script hash and extracts it byte-exactly with the documented command', (t) => {
-    assertPinnedHashAndExtraction(skills, t);
-  });
-
-  it('keeps both skills identical outside host-specific lines', () => {
-    assertSharedText(skills, rules);
-  });
 }
 
 export function execute(command, args, cwd, env = {}) {
@@ -142,15 +100,13 @@ function fileDigests(directory) {
   return digests;
 }
 
-function fixture(t, script, taskRootName) {
+function fixture(t, helper, taskRootName) {
   const root = mkdtempSync(join(tmpdir(), 'agent-snapshot-test-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const repo = join(root, 'repository with spaces');
   const taskRoot = join(root, taskRootName);
   mkdirSync(taskRoot, { mode: 0o700 });
   const task = mkdtempSync(join(taskRoot, 'task.'));
-  const helper = join(task, 'agent-snapshot.sh');
-  writeFileSync(helper, script, { mode: 0o600 });
   success(execute('bash', ['-n', helper], root));
   const state = join(task, 'state');
   mkdirSync(repo);
@@ -174,11 +130,11 @@ function fixture(t, script, taskRootName) {
   return { root, repo, state, helper, git, write, run, init, capture, names };
 }
 
-/** Behavioural tests of the embedded helper, once per host variant. */
+/** Behavioural tests of scripts/agent-snapshot.sh, once per host variant. */
 export function describeHelperSuite(skills) {
-  for (const { host, skill, script } of skills) {
-    describe(`${host} embedded agent-snapshot helper`, () => {
-      const make = (t) => fixture(t, script, skill);
+  for (const { host, skill, dir } of skills) {
+    describe(`${host} agent-snapshot helper`, () => {
+      const make = (t) => fixture(t, join(dir, 'scripts', 'agent-snapshot.sh'), skill);
 
       it('survives fresh processes and cwd changes, preserving actual working content and Git storage', (t) => {
         const f = make(t);
