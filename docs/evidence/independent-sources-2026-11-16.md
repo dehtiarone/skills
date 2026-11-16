@@ -35,7 +35,7 @@ This index lists every source behind a performance, cost or escalation decision 
 | GPT-6.1 Terra · high | 42.4 | 0.259 | .375 | .419 | 1265 | .585 |
 
 - Derived time per index task (output tokens ÷ measured speed, not wall-clock), `low` / `medium` / `high`: Haiku 2.2 / 4.0 / 6.5 min; Sonnet 2.6 / 4.0 / 6.9; Luna 0.6 / 3.5 / 5.7; Terra 1.2 / 2.8 / 4.2.
-- Caveats: AA's harnesses (Stirrup, mini-swe-agent), not Claude Code or Codex; confidence intervals only for Elo metrics; FrontierCode-AA is judged by GPT-6 Luna, one of the evaluated models.
+- Caveats: an external review that re-extracted the page's data reports that the Sonnet 5.5 entries carry the configuration label "Default Fallback", which this table's row labels omit; whether a fallback model answered in those runs is not published, so the Sonnet rows are not established as pure Sonnet 5.5 results. The derived times move with the endpoint speed measured on the day. AA's harnesses (Stirrup, mini-swe-agent), not Claude Code or Codex; confidence intervals only for Elo metrics; FrontierCode-AA is judged by GPT-6 Luna, one of the evaluated models.
 
 ## 3. Artificial Analysis, Coding Agent Index v2.1
 
@@ -78,17 +78,17 @@ This index lists every source behind a performance, cost or escalation decision 
 
 | Source | Check | Finding used |
 |---|---|---|
-| Dekoninck, Baader, Vechev, "A Unified Approach to Routing and Cascading for LLMs", arXiv 2410.10347 (ETH Zurich) | Authors independent; the theory and the non-SWE experiments stand; **the SWE-Bench routing result (appendix) uses the Verified subset and is excluded** | A cascade pays only with a good after-the-fact quality signal; up-front routing did not work on SWE-Bench |
+| Dekoninck, Baader, Vechev, "A Unified Approach to Routing and Cascading for LLMs", arXiv 2410.10347 (ETH Zurich) | Authors independent; the theory and the non-SWE experiments stand; **the SWE-Bench routing result (appendix) uses the Verified subset and is excluded** | A cascade pays only with a good after-the-fact quality signal. (The SWE-Bench routing result is not used.) |
 | Chen, Zaharia, Zou, "FrugalGPT", arXiv 2305.05176 (Stanford) | Independent | Cheap-first cascades match strong-model quality at lower cost when a scorer decides escalation |
 | Stroebl, Kapoor, Narayanan, "The Limits of Inference Scaling Through Resampling", arXiv 2411.17501 (Princeton) | Authors independent; the theory and the MBPP+ results stand; its HumanEval+ results derive from an OpenAI dataset and are not relied on | Retrying against an imperfect check has a ceiling set by the check's false-positive rate; few retries are optimal |
-| Adnan, Kuhn, "The Debugging Decay Index", arXiv 2506.18403 | Independent | Repair effectiveness drops 60–80 % within two or three attempts |
-| Chen et al., "Model Cascading for Code", arXiv 2405.15842 (NYU) | Independent | Cascading wastes money when the cheap model is very weak on the task or the tasks are hard |
+| Adnan, Kuhn, "The Debugging Decay Index", arXiv 2506.18403 | Authors independent; **the experiments use HumanEval, an OpenAI dataset: excluded as quantitative support** | Not used. Stopping repeated repair early is a design choice without an eligible measurement |
+| Chen et al., "Model Cascading for Code", arXiv 2405.15842 (NYU) | Authors independent; the MBPP and APPS results stand; **the HumanEval results are excluded** | Cascading wastes money when the cheap model is very weak on the task. (The paper reports no link between task difficulty and average savings.) |
 | Gandhi et al., "Strong-Weak Model Collaboration for Repo-level Code Generation", arXiv 2505.20182 (CMU) | Independent | Weak-first wins at low budgets, strong-first at higher ones |
 | Son et al., "SWE-Router", arXiv 2607.00053 (UCL) | Authors independent; **results measured on SWE-bench Verified (OpenAI-curated): excluded as evidence, kept as a design idea only** | The strong model is restarted from the original task, not from the weak model's trajectory |
 | Ganz et al., "The Handoff Tax", arXiv 2608.24358 | All authors at AWS; **primary coding study on SWE-bench Verified: excluded as evidence, kept as a design idea only** | Continuing a cheap trajectory with a strong model was dominated by a fresh strong run |
 | Kim et al., "Correlated Errors in Large Language Models", arXiv 2506.07962; Goel et al., arXiv 2502.04313 | Independent | Models tend to be wrong together, so a stronger model rescues only part of what a weaker one fails |
 | Sun et al., "What Effort Level Should I Choose?", arXiv 2610.34491 | Together AI; not Anthropic or OpenAI; simulated | Starting at the lowest effort and retrying higher after a failed check matched or beat a fixed top effort, with median savings of 15–41 %, given a reliable verifier |
-| Yang et al., "Ares", arXiv 2603.07915 (UCSB, Accenture) | Independent | `medium` captures most of `high`'s gain at far fewer reasoning tokens; `low` collapses on some tasks |
+| Yang et al., "Ares", arXiv 2603.07915 (UCSB, Accenture) | Authors independent; the tool and web results stand; **the research results use BrowseComp-Plus, derived from OpenAI's BrowseComp: excluded** | `medium` captures most of `high`'s gain at far fewer reasoning tokens; `low` collapses on some tasks (eligible subsets only) |
 | Prasad et al., "ADaPT", arXiv 2311.05772 | Independent | Decomposing a task only after it fails beat plain retrying by up to 28–33 points |
 
 No study tests a three-level effort ladder followed by a model change; the ladder is an initial recommendation to evaluate.

@@ -42,15 +42,15 @@ The brief asked for a choice between (a) a full `low → medium → high` expens
 
 Evidence for (b):
 
-- **Claude pair, coding.** On FrontierCode 2.0, Haiku `high` (.1927, $0.139) scores above Sonnet `low` (.0966, $0.369) and `medium` (.1496, $0.482); only Sonnet `high` (.2295, $1.066) is above it. Artificial Analysis' re-run of the same tasks agrees (.232 vs .071, .110, .257), and its index puts Sonnet `low` and `medium` (25.6, 30.8) at or below Haiku `high` (29.9), with `high` (41.5) clearly above.
+- **Claude pair, coding.** On FrontierCode 2.0, Haiku `high` (.1927, $0.139) scores above Sonnet `low` (.0966, $0.369) and `medium` (.1496, $0.482); only Sonnet `high` (.2295, $1.066) is above it. Artificial Analysis' re-run of the same tasks agrees (.232 vs .071, .110, .257), and its index puts Sonnet `low` (25.6) below Haiku `high` (29.9), `medium` (30.8) just above it and `high` (41.5) clearly above. Artificial Analysis labels its Sonnet 5.5 entries "Default Fallback"; whether a fallback model answered in those runs is not published, so they are weaker evidence than the FrontierCode rows.
 - **Codex pair.** Terra is absent from FrontierCode. On Artificial Analysis, Terra `low` (29.4) already beats Luna `high` (21.4), and Terra `high` reaches 42.4 at $0.259 per index task, 3.5 times Luna `high`.
-- **Cascade research.** Escalation pays when an executed check decides it; repair attempts lose most of their value within two or three tries; the strong model should start fresh from the task, not continue the weak trajectory; errors are correlated across models, so expect partial rescue. The one study of effort ladders (simulated, Together AI) jumps from lowest to highest.
+- **Cascade research.** Escalation pays when an executed check decides it (Dekoninck et al., theory; FrugalGPT); errors are correlated across models, so expect partial rescue. The one study of effort ladders (simulated, Together AI) jumps from lowest to highest. Two further rules are design choices without eligible measurements: stopping repeated repair early (the Debugging Decay Index measured this on HumanEval, an OpenAI dataset, so it is excluded) and starting the stronger model fresh from the task (SWE-Router measured this on SWE-bench Verified, excluded).
 
 So after an item has used at least four cheap takes and passed the gate, the take with the highest independent expected gain is the expensive model at `high`, on both hosts. Restarting at `low` (option (a)) would on Claude spend two calls that are dearer and no stronger than the take that just failed.
 
 Against the alternatives. (a): contradicted by the Claude rows. (c): the task-kind signal conflicts between sources (Sonnet's edge is large on tool use and terminal work, small on research and data; Terra's research signal differs between LiveBench and Vals), and a kind-dependent rule would add a judgment the coordinator must make. (d): Sonnet `high` and Terra `high` show real gains over the cheap model's `high` in every independent source that has the rows, so removing escalation would leave provably solvable items unresolved; the gate and the cost weight already make it rare.
 
-Caveats. For the Codex pair the evidence points to (a) being viable too: Terra `low` would often suffice at a quarter of the cost. One shared option was required; (b) costs Codex at most one dearer call per escalated item and saves two possible extra takes. Terra has no Codex-harness row at these efforts, so its rung is an **initial recommendation to evaluate**. All of this is coding and agent evidence; for research and data work it is a proxy, and on data analysis (Hex) the expensive model's edge is small.
+Caveats. For the Codex pair the evidence points to (a) being viable too: Terra `low` would often suffice at a quarter of the cost. The brief asks for one option on both hosts, and "no expensive rung, or opt-in only" was among the options it allowed; (b) was chosen and it costs Codex at most one dearer call per escalated item and saves two possible extra takes. Terra has no Codex-harness row at these efforts, so its rung is an **initial recommendation to evaluate**. All of this is coding and agent evidence; for research and data work it is a proxy, and on data analysis (Hex) the expensive model's edge is small.
 
 ### 3.2 The cheap segment and the cost of starting at `low`
 
@@ -58,7 +58,7 @@ Caveats. For the Codex pair the evidence points to (a) being viable too: Terra `
 
 Starting everything at `low` is a requirement. Its cost, stated plainly:
 
-- A `low` attempt followed by `medium` on failure costs `C_low + (1 − p_low) × C_medium`, where `p_low` is the share of items `low` passes outright. It is cheaper than starting at `medium` only when `p_low` exceeds `C_low / C_medium`: 0.67 for Haiku and 0.25 for Luna. On FrontierCode-sized tasks `p_low` is far below that (0.106 and 0.041), so a `low` start there would cost about 55 % more than a `medium` start on Haiku ($0.152 against $0.097) and about 20 % more on Luna ($0.111 against $0.092), and be slower. These are plug-in estimates from published means, not measurements, and the benchmark does not publish which tasks each effort solves.
+- A `low` attempt followed by `medium` on failure costs `C_low + (1 − p_low) × C_medium`, where `p_low` is the share of items `low` passes outright. It is cheaper than starting at `medium` only when `p_low` exceeds `C_low / C_medium`: 0.67 for Haiku and 0.25 for Luna. On FrontierCode-sized tasks `p_low` is far below that (the file's pass rates at `low` are 0.118 and 0.046), so a `low` start there would cost about 55 % more than a `medium` start on Haiku ($0.151 against $0.097) and about 20 % more on Luna ($0.111 against $0.092), and be slower. These are plug-in estimates from published means, not measurements, and the benchmark does not publish which tasks each effort solves.
 - Independent research says cascading wastes money where the cheap setting is very weak (Chen et al.), and Luna `low` is very weak on hard tasks (FrontierCode .0405, Terminal-Bench 4.0 .000 at Artificial Analysis).
 - The skill's items are far smaller than benchmark tasks, where `low` should succeed much more often; no independent source measures that.
 
@@ -101,10 +101,10 @@ Every budget is at least twice the old one (3.0 to 4.7 times).
 | ---- | ------ | ----- | ------ | ------ |
 | A | 14 | 21 | 1.50 | One item: the expected `medium` take and one continuation; the floor of the range |
 | B | 24 | 36 | 1.50 | Few items; same reasoning |
-| C | 30 | 50 | 1.67 | Each of more items is expected to need its `medium` take (about three in four on FrontierCode-like work, against one in four for Haiku), and map items start at `low` too |
+| C | 30 | 50 | 1.67 | More items, each with its own `low` first take, and map items start at `low` too |
 | D | 36 | 64 | 1.78 | As C, plus two validators that each start at `low` and re-run after every repair |
 
-Evidence for the factor is indirect: Luna's first-take failure rate at `low`, its short rollouts, and its lower per-call cost (Luna `low` $0.023, `medium` $0.092 against Haiku $0.065, $0.097), which keeps the dollar cap of a Codex run at or below a Claude run despite more calls. The exact values inside the range are initial recommendations to evaluate.
+The factor is not derived from failure rates: on FrontierCode both cheap models fail most tasks at `low` (pass rates 0.046 for Luna and 0.118 for Haiku), which says little about the skill's much smaller items. It rests on the brief's required range, on Luna's short rollouts, and on its lower per-call cost (Luna `low` $0.023, `medium` $0.092 against Haiku $0.065, $0.097), which keeps the dollar cap of a Codex run at or below a Claude run despite more calls. The exact values inside the range are initial recommendations to evaluate.
 
 **Admission.** `used + this batch + first takes owed to other items + validators still to run + reserve ≤ budget`, item by item. The reserve (`1 + V`) is held until the first validation FAIL and then spent. A level 4 call is an ordinary, dearer item, so the old "after a FAIL on r items" cases fall out of the same formula: retries that do not fit stop their item unresolved, and validation is never run on an unchanged patch.
 
@@ -147,10 +147,10 @@ Loading plan: SKILL.md always. Tier A or B code task: nothing else. `kind-infra.
 
 | Measure | 1.2.0 | 2.0.0 |
 | ------- | ----- | ----- |
-| Largest SKILL.md | 33,928 B (about 8,500 tokens), 337 lines | 13,111 B Codex, 12,950 B Claude (about 3,300 tokens; 38.6 % and 38.2 % of before), 110 and 113 lines |
-| Loaded for a tier B code run | 33,468 B | 12,950 B |
-| Loaded for a tier D code run, no failures | 33,468 B | 17,012 B (SKILL.md, `tiers.md`, `kind-code.md`) |
-| Loaded for a tier D run with a gate | 33,468 B | 24,122 B (adds `triage.md`) |
+| Largest SKILL.md | 33,928 B (about 8,500 tokens), 337 lines | 13,276 B Codex, 13,115 B Claude (about 3,300 tokens; 39.1 % and 38.7 % of before), 110 and 113 lines |
+| Loaded for a tier B code run | 33,468 B | 13,115 B |
+| Loaded for a tier D code run, no failures | 33,468 B | 17,177 B (SKILL.md, `tiers.md`, `kind-code.md`) |
+| Loaded for a tier D run with a gate | 33,468 B | 24,602 B (adds `triage.md`) |
 | Coordinator text per brief | 15 required fields; about 1,500–2,500 B (estimate, no trace kept) | two lines, 316 B in the live run, plus one plan line per item |
 
 Byte counts are measured static document loads, not peak coordinator context (replies, plan lines, script output and the report add to it); token counts assume four bytes per token. Claude Code re-attaches an invoked skill after compaction up to 5,000 tokens, so the whole SKILL.md survives.
@@ -174,7 +174,7 @@ Checked against current host behaviour:
 - Claude Code: `general-purpose` for every worker; `Explore` denies Write, so it cannot write its report file; a fork inherits the parent; subagents Claude starts may run in the background, so the skill says to wait for every return (or completion notice) rather than naming a foreground flag; the concurrency error text starts "Concurrent subagent limit reached"; per-call `model` outranks a subagent definition's `model`, which outranks `CLAUDE_CODE_SUBAGENT_MODEL`; `CLAUDE_CODE_EFFORT_LEVEL` outranks per-call effort.
 - Pinned subagent definitions (`agents/*.md` with `model: haiku`) are not shipped: the per-call parameter already wins, a definition fixes one effort so six files would be needed, and users who copy `skills/` alone would not get them. `pinning.md` mentions them as an option.
 - Codex: `fork_turns: "none"` always; the advertised slot count is passed as `--slots`; role files and `[agents]` defaults are shown as a fallback in `pinning.md`, not shipped. The script prints `reasoning_effort=` on Codex and `effort=` on Claude Code, and marks validators with `barrier=yes` instead of a host-specific background flag.
-- Pinning verdicts are derived, not asserted: Known mismatch from the environment preflight, from `ledger.sh pinning TASK mismatch`, or from any `--ran` that differs; Verified only when every call's `--ran` equals the request. A Known mismatch stops dispatch until the user accepts it (`pinning accept`), because the models and efforts are requirements, not preferences.
+- Pinning verdicts are derived, not asserted: Known mismatch from the environment preflight, from `ledger.sh pinning TASK mismatch`, or from any `--ran` that differs; Verified only when every call's `--ran` shows the requested effort and a model ID of the required generation (the bare alias gives "generation unverified"). A Known mismatch stops dispatch until the user accepts it (`pinning accept`), because the models and efforts are requirements, not preferences.
 
 Vendor guidance followed (how to write a skill, not performance evidence): Anthropic, "Skill authoring best practices" (<https://platform.claude.com/docs/en/agents-and-tools/agent-skills/best-practices>) and Claude Code "Skills" (<https://code.claude.com/docs/en/skills>): body under 500 lines, third-person description of what and when, references one level deep from SKILL.md, scripts executed rather than read, no time-sensitive content, one term per concept, checklists and feedback loops. The Agent Skills specification (<https://agentskills.io/specification>): `name` matches the directory, description up to 1,024 characters, `scripts/`, `references/`, instructions under 5,000 tokens. OpenAI's `skill-creator` guidance shipped with the Codex client: include only what changes decisions, keep discovery cheap, disclose detail progressively, use `scripts/` where deterministic execution improves reliability, keep `agents/openai.yaml` consistent with the skill, `short_description` of 25–64 characters, `default_prompt` naming `$skill`.
 
@@ -186,13 +186,13 @@ One conflict: OpenAI's guidance says to avoid tests that "merely match generated
 - A worker-side wrapper that records checks: re-running the recorded command in the coordinator's script gives stronger evidence with nothing for the worker to learn.
 - Hash-pinning the scripts: see section 8.
 - Alias stubs for the old skill names: neither host offers an alias at zero context cost; the changelog carries the migration.
-- Per-kind or per-tier starting levels, and any "this looks hard" shortcut: excluded by requirement and by the routing evidence (up-front routing did not work on SWE-Bench).
+- Per-kind or per-tier starting levels, and any "this looks hard" shortcut: excluded by requirement. (An earlier version also cited a routing result measured on SWE-bench Verified; that result is excluded as evidence.)
 - A third model, or effort above `high`: excluded by requirement.
 - Rendering the report in the coordinator: the script renders it; the coordinator relays about 25 lines.
 
 ## 12. Open risks
 
-1. **The ledger script is large** (about 1,760 lines of Bash 3.2). It is covered by scenario tests, but a bug in it is a bug in every run. Its verdict lines are the interface; the coordinator has no fallback if it fails, other than reporting the failure.
+1. **The ledger script is large** (about 1,850 lines of Bash 3.2). It is covered by scenario tests, but a bug in it is a bug in every run. Its verdict lines are the interface; the coordinator has no fallback if it fails, other than reporting the failure.
 2. **Re-running recorded commands** executes strings written by a cheap worker, in the coordinator's environment and with its credentials. The script refuses, before execution, commands that look like they change an external system, and in infra runs any cloud or database CLI command the plan did not fix; it logs every command it runs. That is a screen, not a sandbox: a changing command it does not recognise still runs. The real protection for cloud work is a read-only identity, which the skill recommends and cannot enforce.
 3. **The `low` start on Codex** may cost time without saving money on hard items (section 3.2).
 4. **The expensive rung** (one take at `high`, on both hosts, for every kind of task), Terra's place in it and the Codex factors rest on aggregate leaderboard order, not on measured rescue rates after a cheap failure, and Zapier's tool-use rows order Sonnet's efforts the other way. They are initial choices to evaluate.
@@ -228,4 +228,23 @@ One conflict: OpenAI's guidance says to avoid tests that "merely match generated
 | The `low`-start cost argument used the wrong probability | Corrected (section 3.2) |
 | Publisher-level independence claims | Experiment-level notes in the source index |
 
-Not changed, and why: the expensive rung stays on by default, because the task requires a gated second model and choosing one option; the review's proposal to make it opt-in until per-kind rescue rates are measured is a policy decision for the maintainer. A constrained command runner for cloud audits was not built; the screen and the read-only-identity advice stand in for it. No live compaction, weak-coordinator or Codex run was made.
+Not changed, and why: the expensive rung stays on by default. The brief asks for a gated second model and one option for both hosts, but it also allowed "none, or opt-in", so this is a choice, not a requirement; the review's proposal to make it opt-in until per-kind rescue rates are measured is a policy decision for the maintainer. A constrained command runner for cloud audits was not built; the screen and the read-only-identity advice stand in for it. No live compaction, weak-coordinator or Codex run was made.
+
+## 15. Changes after the second external review
+
+A second external review reproduced further failures on commit `7b2cad1`. Each has a regression test under "third review regressions" in `test/ledger.test.mjs`.
+
+| Finding | Change |
+|---|---|
+| A plan check's expected text could come from another command the worker recorded (`bin/greet; echo correct`) | When the plan fixes a `check:`, only that command is run for a PASS, and only its exit status and output are judged. The worker's own command and quoted line count for nothing |
+| `bash -c 'echo correct'` passed the fixed-text screen | Shell wrappers are unwrapped before the screen. The screen stays a blacklist, so a run whose accepted criteria include a worker-chosen check now ends as `complete, PROVISIONAL`, not `complete` |
+| A validator's check wrote a file outside any ownership and the write was absorbed into the validated state | A record whose checks change workspace files is rejected; nothing is accepted on the changed state; the next dispatch stops on the change. A plan line `scratch <glob>` releases a path. Nothing is reverted |
+| `curl -d …` ran in an infra run | In an infra run the script executes only commands the plan fixed. In every kind it refuses network and cloud CLIs the plan did not fix, and the changing-command patterns cover `curl`/`wget` uploads, `git push`, package publishing and `ssh` |
+| A failed final snapshot still reported `complete` | A helper error gives `INVALID (the workspace could not be compared …)`, and `report` exits 3 |
+| A replaced criterion kept the earlier gate authorisation | A changed criterion restarts its items at level 1 on the cheap model; earlier takes, diagnosis and the escalation record stop counting; validation is reset |
+| `claude-haiku-4-5/low` counted as Verified | Only a model ID of the required generation verifies the model. The bare alias gives "Requested; model generation unverified"; another generation is a Known mismatch |
+| The script wrote a detected secret into evidence output | Worker-chosen commands run without the credentials the script recognises; output is filtered before it is stored; a record whose output held a secret is rejected |
+| Excluded results still carried arguments; ineligible datasets were unmarked | Section 3.1 and the source index no longer use the Debugging Decay Index (HumanEval), the SWE-bench Verified routing result or Ares' BrowseComp-derived results as support |
+| Budget rationale cited failure rates the file does not show; weighted scores used as pass rates | Corrected in sections 3.2 and 5 |
+
+Still not done: checks run in the live workspace with the coordinator's permissions, not in a disposable copy with controlled network access, so the command screen remains a heuristic. Worker identity is still bound when a result is recorded, not when the worker starts. A declared limit is still a worker count, not a per-service request rate. No live, eval, compaction, weak-coordinator or Codex run has been made; the review's proposed release gate (tier B, tier D, a real gate, cloud and data fixtures, interruption, a serial baseline under Haiku and Luna parents) is the right next step and needs an authenticated CLI.
