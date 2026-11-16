@@ -13,7 +13,7 @@ A batch is admitted item by item, in plan order. An item joins only while
 `used + cost of this batch + first takes still owed to other items + validators still to run + reserve ≤ budget`
 
 - The reserve is one repair plus its revalidation (`1 + validators`). It is held until the first validation FAIL and then spent on repairs.
-- A level 4 call is an ordinary item with a higher cost, so model escalation limits itself.
+- A level 4 call is an ordinary item with a higher cost, so model escalation limits itself. The gate checks the same formula before it opens, so a passed gate is never refused at dispatch.
 - A first take that is not admitted stays planned: merge items, or stop one. A retry that is not admitted stops its item unresolved.
 - Serialising changes concurrency, not cost: every planned item is counted from the start.
 
@@ -21,7 +21,7 @@ Width is the smallest of: eligible items (disjoint owned outputs, dependencies d
 
 ## Takes per item
 
-A produce item's take limit covers the whole climb: three cheap levels, one omission retry, one narrowing take, the level 4 take, and room for a continuation and an environment retry (8 on Claude Code). Map and verify items get the three cheap levels plus one retry (4). On Codex both limits are 1.5 times larger, because its cheap worker needs continuations more often.
+A produce item's take limit covers the whole climb: three cheap levels, one omission retry, one narrowing take, the single level 4 take, and room for a continuation and an environment retry (8 on Claude Code). The limit is enforced at dispatch for every item, validators included. Map and verify items get the three cheap levels plus one retry (4). On Codex both limits are 1.5 times larger, because its cheap worker needs continuations more often.
 
 ## Worked example: tier B on Claude Code, budget 24
 
@@ -38,6 +38,6 @@ Four produce items, one validator.
 
 ## Worked example: one item climbs the whole ladder (Claude Code)
 
-Levels 1, 2 and 3 (3 units), an omission retry (1), the narrowing take (1), a `why-` map item for the gate (1), the level 4 take (8), and validation before and after (2): 16 units. Every tier's budget covers this for one item on top of its planned work; tier A's 14 covers it without the validator and the diagnosis.
+Levels 1, 2 and 3 (3 units), the narrowing take (1), a `why-` map item to classify the failure (1), then the gate. The gate uses the same admission formula as `dispatch`: used 5 + the level 4 call 8 + what the run still owes. In tier A nothing is owed but the reserve of 1, so 14 of 14 admits it. In tier B, C and D the owed part is the validation still to run plus the reserve (3, 3 and 5 units), on top of the other items' work. An omission retry or a continuation before the gate costs one unit each and can make the difference in tier A; then the item ends unresolved instead of escalating.
 
-On Codex the same climb with one continuation per cheap level and the fifth cheap take is 3 + 3 + 1 + 1 + 1 + 1 + 4 + 2 = 16 units as well, because the level 4 call weighs 4.
+On Codex the same climb needs a fifth cheap take and usually one continuation per cheap level (8 cheap units), the map item (1) and the level 4 call (4): 13 units before what is owed.

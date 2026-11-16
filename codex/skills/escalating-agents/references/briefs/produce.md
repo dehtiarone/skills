@@ -17,7 +17,7 @@ verdict: PASS            (PASS | FAIL | NOT_RUN)
 type: behavioral         (must equal the criterion's evidence type)
 command: <one shell command, run from the workspace root, that the coordinator's script will re-run>
 exit: 0
-decisive: <one line copied literally from that command's output that shows the result>
+decisive: <one whole line copied literally from that command's output that shows the result>
 ```
 For `command-output` and `source` evidence write `saved: <file under your evidence directory>` and, for a source, `cite: <URL>` and `retrieved: <time>`; for `inspection` write `cite: <path>:<line>`. `decisive` is then a line copied from that file.
 

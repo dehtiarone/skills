@@ -15,9 +15,10 @@ Write your report file with these sections, each short:
 3. `## Plan lines`: when asked to scope work, ready-to-use lines, one behaviour per item, owned outputs disjoint:
    `criterion C1 behavioral | <what must be true> | check: <command>`
    `item produce <slug-of-at-most-20-chars> | <task in one sentence> | owns: <globs> | criteria: C1`
-4. `## Diagnosis`: only when asked why an item failed. End it with exactly these two lines:
+4. `## Diagnosis`: only when asked why an item failed. End it with exactly these three lines:
    `class: capability|omission|environment|flaky|ambiguity|scope`
-   `reproduced: yes|no` (yes only if you re-ran a failing check yourself; give the command and exit status)
+   `reproduced: yes|no` (yes only if you re-ran a failing check yourself)
+   `command: <the one shell command, run from the workspace root, that fails>` (the coordinator's script re-runs it)
 5. `## Open points`.
 
 Reply to the coordinator in at most 10 lines, nothing else:

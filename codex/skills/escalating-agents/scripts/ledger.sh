@@ -17,7 +17,7 @@ CHEAP_TOP=3
 TYPES_RUN='behavioral static parse format reconciliation recompute schema'
 TYPES_SAVED='command-output source'
 TYPES_ALL="$TYPES_RUN $TYPES_SAVED inspection"
-MUTATION_RE='(^|[;&|[:space:]])(aws|gcloud|gsutil|bq|az|kubectl|helm|terraform|tofu|pulumi|doctl|oci|psql|mysql|mongosh|snowsql|curl)[[:space:]].*((^|[[:space:]])(create|delete|remove|rm|rb|mb|put|post|patch|update|modify|set|add|attach|detach|associate|disassociate|run|start|stop|terminate|reboot|apply|destroy|deploy|import|restore|revoke|grant|authorize|enable|disable|tag|untag|cp|mv|sync|insert|drop|truncate|alter|scale|rollout|exec|cordon|drain|taint)([-[:space:]]|$)|-X[[:space:]]*(POST|PUT|PATCH|DELETE)|--data)'
+MUTATION_RE='(^|[;&|[:space:]/])(aws|gcloud|gsutil|bq|az|kubectl|helm|terraform|tofu|pulumi|doctl|oci|psql|mysql|mongosh|snowsql|curl)[[:space:]].*((^|[[:space:]"(]|'"'"')(create|delete|remove|rm|rb|mb|put|post|patch|update|modify|set|add|attach|detach|associate|disassociate|run|start|stop|terminate|reboot|apply|destroy|deploy|import|restore|revoke|grant|authorize|enable|disable|tag|untag|cp|mv|sync|insert|drop|truncate|alter|scale|rollout|exec|cordon|drain|taint)([-[:space:]]|$)|-X[[:space:]]*(POST|PUT|PATCH|DELETE)|--data)'
 
 die() { printf 'ledger: %s\n' "$*" >&2; exit 1; }
 usage() {
@@ -30,6 +30,7 @@ usage() {
     '       ledger.sh classify TASK STAGE/SLUG CLASS --evidence FILE' \
     '       ledger.sh answer TASK STAGE/SLUG TEXT | stop TASK STAGE/SLUG REASON | defer TASK STAGE/SLUG ...' \
     '       ledger.sh scope TASK extend GLOB | scope TASK reject | promote TASK TIER REASON' \
+    '       ledger.sh pinning TASK mismatch TEXT' \
     '       ledger.sh status TASK | report TASK [--external TEXT] [--usage TEXT] | numbers HOST' >&2
   exit 64
 }
@@ -90,6 +91,7 @@ level_me() {
   done
   die "no level $2 on the ladder of $(iname "$1")"
 }
+effort_name() { if [[ "$HOST" == codex ]]; then printf reasoning_effort; else printf effort; fi; }
 time_limit() { if [[ "$TIER" == A || "$TIER" == B ]]; then printf 10; else printf 25; fi; }
 confirmed_text() {
   if [[ "$1" == check ]]; then printf 'reproducible failing check re-run by the script'
@@ -136,6 +138,7 @@ snap() { bash "$HELPER" "$@"; }
 add_item() { # stage slug task owns criteria after
   local id="$1.$2" other
   [[ "$2" =~ ^[a-z0-9][a-z0-9-]{0,19}$ ]] || die "slug must be 1-20 chars of a-z, 0-9 and hyphen, named after the item's purpose: $2"
+  if [[ "$1" != verify ]] && in_list "$2" 'checks review'; then die "slug '$2' is reserved for the validators; choose another"; fi
   for other in $(items); do
     if [[ "$(islug "$other")" == "$2" && "$other" != "$id" ]]; then die "slug already used by $(iname "$other"): $2"; fi
   done
@@ -166,8 +169,7 @@ ensure_verify_items() {
     add_item verify review 'Independent review: read the integrated patch line by line against the request, the decisions and the specifications.' '' 'R1' ''
   fi
 }
-cmd_plan() {
-  load_task "${1:-}"
+plan_apply() {
   local line n=0 kw rest check expect text owns crit after field key stage slug type cid first_items planned=0
   first_items=$(items)
   while IFS= read -r line || [[ -n "$line" ]]; do
@@ -233,6 +235,16 @@ cmd_plan() {
       *) die "line $n: unknown plan keyword '$kw' (request, criterion, item, decision, allow, limit, writers)" ;;
     esac
   done
+  if [[ "$TIER" == A ]]; then
+    # Tier A has no validator, so the check must be fixed in the plan, not chosen by the producer.
+    local owned
+    for owned in $(items); do
+      [[ "$(istage "$owned")" == produce ]] || continue
+      for cid in $(printf '%s' "$(iget "$owned" criteria '')" | tr ',' ' '); do
+        [[ -n "$(cat "$TASK/criteria/$cid/check" 2>/dev/null || true)" ]] || die "tier A accepts on the plan's own check: give criterion $cid a 'check:' command, or use tier B"
+      done
+    done
+  fi
   ensure_verify_items
   if [[ -z "$(rget run_line '')" && -n "$(items)" ]]; then
     local count=0 id pin=''
@@ -244,7 +256,26 @@ cmd_plan() {
   elif [[ "$planned" -gt 0 && -n "$first_items" ]]; then
     printf 'note: %s item(s) added\n' "$planned"
   fi
-  next_hint
+}
+cmd_plan() {
+  load_task "${1:-}"
+  local backup f saved
+  backup=$(mktemp -d "$TASK/plan.XXXXXX")
+  cp -R "$TASK/criteria" "$TASK/items" "$backup/"
+  for f in order decisions.md request.md allowed-external.md run/slots run/writers run/run_line log.txt; do
+    if [[ -f "$TASK/$f" ]]; then cp "$TASK/$f" "$backup/$(printf '%s' "$f" | tr '/' '_')"; fi
+  done
+  if ( plan_apply ); then rm -rf "$backup"; next_hint; return 0; fi
+  # A plan is applied whole or not at all, so a corrected plan can simply be sent again.
+  rm -rf "$TASK/criteria" "$TASK/items"
+  mv "$backup/criteria" "$backup/items" "$TASK/"
+  for f in order decisions.md request.md allowed-external.md run/slots run/writers run/run_line log.txt; do
+    saved="$backup/$(printf '%s' "$f" | tr '/' '_')"
+    if [[ -f "$saved" ]]; then cp "$saved" "$TASK/$f"; else rm -f "$TASK/$f"; fi
+  done
+  rm -rf "$backup"
+  printf 'ledger: nothing from this plan was applied; correct the line and send the whole plan again\n' >&2
+  exit 1
 }
 
 # ---- briefs ----------------------------------------------------------------------------------
@@ -256,6 +287,7 @@ write_brief() { # id → path in BRIEF
   BRIEF="$TASK/briefs/$stage.$slug.take-$take.md"
   tmpl="$stage"
   if [[ "$stage" == produce && "$take" -gt 1 ]]; then tmpl=repair; fi
+  if [[ "$(iget "$id" level)" -gt "$CHEAP_TOP" ]]; then tmpl=escalated; fi
   [[ -f "$SKILL_DIR/references/briefs/$tmpl.md" ]] || die "missing brief template: references/briefs/$tmpl.md"
   level_me "$id" "$(iget "$id" level)"
   name=$(printf '%s' "$stage" | cut -c1 | tr '[:lower:]' '[:upper:]')$(printf '%s' "$stage" | cut -c2-)
@@ -277,7 +309,8 @@ write_brief() { # id → path in BRIEF
     printf 'Stage: %s | Item: %s | Take: %s | Level: %s\n' "$name" "$slug" "$take" "$(iget "$id" level)"
     printf 'Requested model/effort: %s/%s\n' "$ME_MODEL" "$ME_EFFORT"
     printf 'Task: %s\n' "$(iget "$id" task)"
-    if [[ -n "$(iget "$id" narrow_text '')" ]]; then printf 'Narrowed scope (do only this): %s\n' "$(iget "$id" narrow_text)"; fi
+    if [[ "$tmpl" == escalated ]]; then printf 'Escalation record (why earlier takes failed): %s/escalation.md\n' "$ev"
+    elif [[ -n "$(iget "$id" narrow_text '')" ]]; then printf 'Narrowed scope (do only this): %s\n' "$(iget "$id" narrow_text)"; fi
     if [[ "$stage" == produce ]]; then
       printf 'Owned outputs (write nowhere else in the workspace): %s\n' "$(iget "$id" owns)"
       if [[ -n "$(iget "$id" cleanup '')" ]]; then printf 'Cleanup (revert these only if you changed them; they are outside every ownership): %s\n' "$(iget "$id" cleanup)"; fi
@@ -330,6 +363,25 @@ produced_any() { # 0 when at least one produce item awaits verification
   for id in $(items); do [[ "$(istage "$id")" == produce && "$(iget "$id" status)" == done ]] && return 0; done
   return 1
 }
+verify_dead() { # 0 when a validator the tier requires was stopped: verification cannot complete
+  local id
+  for id in $(items); do [[ "$(istage "$id")" == verify && "$(iget "$id" status)" == unresolved ]] && return 0; done
+  return 1
+}
+verify_stale() { # 0 when the last validation failed and the workspace has not been changed since
+  [[ -n "$(rget failed_frozen '')" && "$(rget frozen '')" == "$(rget failed_frozen '')" ]]
+}
+# Units the run still owes besides the batch being admitted: first takes of other items, validation, the reserve.
+owed_units() { # id being admitted
+  local other n=0 vp=0 reserve=0
+  for other in $(items); do
+    [[ "$(istage "$other")" == verify || "$other" == "$1" ]] && continue
+    [[ "$(iget "$other" takes 0)" == 0 ]] && n=$((n + 1))
+  done
+  if verify_pending; then vp=$N_V; fi
+  if [[ "$(rget cycle 0)" == 0 ]]; then reserve=$((1 + N_V)); fi
+  printf '%s\n' $((n + vp + reserve))
+}
 produce_open() { # count of map/produce items that are not finished
   local id n=0
   for id in $(items); do
@@ -380,9 +432,12 @@ cmd_dispatch() {
     if [[ "$stage" == verify ]]; then
       [[ "$open" == 0 ]] || { [[ -z "$explicit" ]] || die 'validators start only after every map and produce item is finished and frozen'; continue; }
       produced_any || continue
+      if verify_dead; then printf 'note: %s is not dispatched: another validator was stopped, so verification cannot complete\n' "$(iname "$id")"; continue; fi
+      if verify_stale; then printf 'note: %s is not dispatched: nothing changed since the last validation FAIL\n' "$(iname "$id")"; continue; fi
     else
       deps_done "$id" || continue
     fi
+    if [[ "$(iget "$id" takes 0)" -ge "$(take_limit "$id")" ]]; then stop_item "$id" 'take limit reached'; continue; fi
     cand="$cand $id"
   done
   # Validators never share a batch with writers or map shards.
@@ -463,6 +518,7 @@ cmd_dispatch() {
     iput "$id" takes "$take"; iput "$id" status running; iput "$id" started "$t"; iput "$id" batch "$batch"
     if [[ "$take" -gt 1 ]]; then
       if [[ -n "$correction" && "$count" == 1 ]]; then iput "$id" "corr.$take" "$correction"
+      elif [[ "$(iget "$id" last_outcome '')" == SUPPORTED ]]; then iput "$id" "corr.$take" 'Fresh validation of a changed workspace. Earlier records are for reference only; re-establish every criterion yourself.'
       else iput "$id" "corr.$take" "Take $((take - 1)) ended $(iget "$id" last_outcome FAIL): $(iget "$id" sig 'no usable result'). Read the prior records and do not repeat that approach."; fi
     fi
     write_brief "$id"
@@ -482,13 +538,13 @@ cmd_dispatch() {
   for id in $admitted; do
     stage=$(istage "$id"); level_me "$id" "$(iget "$id" level)"
     name=$(printf '%s' "$stage" | cut -c1 | tr '[:lower:]' '[:upper:]')$(printf '%s' "$stage" | cut -c2-)
-    printf 'dispatch %s | model=%s | effort=%s | background=%s | continue=%s\n' "$(iname "$id")" "$ME_MODEL" "$ME_EFFORT" \
-      "$(if [[ "$stage" == verify ]]; then printf no; else printf yes; fi)" "$(if [[ "$(iget "$id" continue 0)" == 1 ]]; then printf same-worker; else printf no; fi)"
+    printf 'dispatch %s | model=%s | %s=%s | barrier=%s | continue=%s\n' "$(iname "$id")" "$ME_MODEL" "$(effort_name)" "$ME_EFFORT" \
+      "$(if [[ "$stage" == verify ]]; then printf yes; else printf no; fi)" "$(if [[ "$(iget "$id" continue 0)" == 1 ]]; then printf same-worker; else printf no; fi)"
     printf '  Read the brief file named below completely, then do exactly what it says. Reply in at most 10 lines.\n'
     printf '  Stage: %s | Item: %s | Take: %s | Level: %s | Brief: %s\n' "$name" "$(islug "$id")" "$(iget "$id" takes)" "$(iget "$id" level)" "$(iget "$id" brief)"
     iput "$id" continue 0
   done
-  printf 'next: start each dispatch above with exactly that model, effort and two-line prompt, all in one message; then record each return with ledger.sh result\n'
+  printf 'next: start every worker above at once, each with exactly the printed model and %s and the two indented lines as its whole instruction; barrier=yes means nothing else starts until all of them have returned; then record each return with ledger.sh result\n' "$(effort_name)"
 }
 cmd_defer() { # the host refused these spawns for capacity: undo the dispatch and learn the width
   load_task "${1:-}"; shift
@@ -538,7 +594,7 @@ judge_block() {
       if [[ "$B_class" == environment && -n "$B_reason" ]]; then res=notrun; detail=$(clean "$B_reason" 70); else res=unsupported; detail='NOT_RUN needs class: environment and a reason'; fi
     fi
     if [[ -z "$res" && "$B_type" != "$required" ]]; then res=unsupported; detail="evidence type $B_type does not satisfy a $required criterion"; fi
-    if [[ -z "$res" && ${#B_decisive} -lt 3 ]]; then res=unsupported; detail='no decisive output line quoted'; fi
+    if [[ -z "$res" && -z "$B_decisive" ]]; then res=unsupported; detail='no decisive output line quoted'; fi
     if [[ -z "$res" ]]; then
       if in_list "$B_type" "$TYPES_RUN"; then
         if [[ -z "$B_command" ]]; then res=unsupported; detail='no command'
@@ -559,7 +615,9 @@ judge_block() {
             elif [[ "$res" == pass && -n "$expect" ]] && ! grep -qF -- "$expect" "$out"; then
               res=unsupported; detail="output lacks the expected text $(outsig "$out")"
             fi
+            [[ "$res" == pass ]] || ACC_RERUN=1
           else
+            ACC_RERUN=1
             if [[ "$RUN_EXIT" == 0 ]]; then res=unsupported; detail="reported FAIL but $(clean "$B_command" 40) exits 0"
             else res=fail; detail="$(clean "$B_command" 30) exit $RUN_EXIT $(outsig "$out")"; fi
           fi
@@ -589,7 +647,7 @@ accept_record() {
   ev=$(evidence_dir "$id"); rec="$ev/take-$(iget "$id" takes).checks.md"
   VERDICT_FILE="$ev/take-$(iget "$id" takes).verdict"
   : > "$VERDICT_FILE"
-  ACC_OK=1; ACC_REASON=''; ACC_PASS=''; ACC_FAIL=''; ACC_NOTRUN=''; SEEN=''
+  ACC_OK=1; ACC_REASON=''; ACC_PASS=''; ACC_FAIL=''; ACC_NOTRUN=''; SEEN=''; ACC_RERUN=0
   if [[ ! -s "$rec" ]]; then ACC_OK=0; ACC_REASON='no check record'; return 0; fi
   B_criterion=''
   reset_block() { B_criterion=''; B_verdict=''; B_type=''; B_command=''; B_exit=''; B_decisive=''; B_saved=''; B_cite=''; B_retrieved=''; B_class=''; B_sig=''; B_reason=''; B_timeout=''; }
@@ -636,15 +694,27 @@ step_up() { # id reason
   event effort "$(iname "$id")" "level $from to $to: $2"
 }
 # Decide what a failed take means. Results, not predictions, move an item.
-advance() { # id outcome class sig
+advance() { # id outcome class sig [class source: worker|validator] [confirmed: check|validator]
   local id=$1 outcome=$2 class=$3 sig level top count same reason stage
   sig=$(clean "$4" 60); [[ -n "$sig" ]] || sig=$(printf '%s' "$outcome" | tr '[:upper:]' '[:lower:]')
   level=$(iget "$id" level); stage=$(istage "$id"); top=$(levels "$id")
   if [[ "$(iget "$id" sig '')" == "$sig" && "$(iget "$id" siglevel 0)" == "$level" ]]; then count=$(( $(iget "$id" sigcount 0) + 1 )); else count=1; fi
   iput "$id" sig "$sig"; iput "$id" siglevel "$level"; iput "$id" sigcount "$count"; iput "$id" class "$class"; iput "$id" last_outcome "$outcome"
+  iput "$id" class_source "${5:-worker}"; iput "$id" confirmed "${6:-}"; iput "$id" classify_evidence ''
   printf '%s\t%s\n' "$level" "$sig" >> "$TASK/items/$id/sigs"
   reason=$sig
   if [[ "$(iget "$id" takes)" -ge "$(take_limit "$id")" ]]; then stop_item "$id" "take limit reached: $sig"; return 0; fi
+  if [[ "$level" -gt "$CHEAP_TOP" ]]; then
+    # The expensive model gets one take per level: no continuation, omission or environment retry at its price.
+    case "$class" in
+      ambiguity|environment|throttle)
+        iput "$id" status blocked
+        item_line block blocked "$id" "$(if [[ "$class" == ambiguity ]]; then printf 'needs your answer'; else printf '%s on the expensive take, no automatic retry' "$class"; fi): $sig"
+        event blocked "$(iname "$id")" "$class: $sig"; return 0 ;;
+    esac
+    if [[ "$level" -lt "$top" ]]; then step_up "$id" "$reason"; else stop_item "$id" "ladder exhausted: $sig"; fi
+    return 0
+  fi
   case "$class" in
     ambiguity)
       iput "$id" status blocked
@@ -682,10 +752,6 @@ advance() { # id outcome class sig
     reason="same failure twice: $sig"
   fi
   if [[ "$level" -lt "$CHEAP_TOP" ]]; then step_up "$id" "$reason"; return 0; fi
-  if [[ "$level" -gt "$CHEAP_TOP" ]]; then
-    if [[ "$level" -lt "$top" ]]; then step_up "$id" "$reason"; else stop_item "$id" "ladder exhausted: $sig"; fi
-    return 0
-  fi
   # At the cheap model's top effort. Support stages stop here: they never use the expensive model.
   if [[ "$stage" != produce ]]; then stop_item "$id" "ladder exhausted: $sig"; return 0; fi
   same=1
@@ -813,12 +879,11 @@ settle_batch() {
             iput "$id" status done; iput "$id" confirmed ''; ndone=$((ndone + 1))
             item_line ok done "$id" "$(where "$id")$(iget "$id" ret_tail '')"
           else
-            iput "$id" confirmed check
             local why="$ACC_REASON"
             [[ -n "$why" ]] || why="check failed:$ACC_FAIL$ACC_NOTRUN"
             item_line fail failed "$id" "$(where "$id")$(iget "$id" ret_tail '')$(sep)$(clean "$why" 70)"
             record_take "$id" 'FAIL(check)' "$(iget "$id" ret_class '')" "$why"
-            advance "$id" FAIL "$(iget "$id" ret_class '')" "$why"
+            advance "$id" FAIL "$(iget "$id" ret_class '')" "$why" worker "$(if [[ "$ACC_RERUN" == 1 ]]; then printf check; fi)"
           fi
         else
           record_take "$id" "$outcome" "$(iget "$id" ret_class '')" "$(iget "$id" ret_sig '')"
@@ -875,7 +940,7 @@ refresh_verify_criteria() {
   iput verify.checks criteria "${keep#,}"
 }
 settle_verify() {
-  local id outcome supported=0 total=0 failed='' notrun='' c owner hit crits=0 unsupported=0 batch line cls sg
+  local id outcome supported=0 total=0 failed='' notrun='' c owner hit crits=0 unsupported=0 batch line cls sg unowned=''
   batch=$(rget batch)
   for id in "$@"; do
     total=$((total + 1))
@@ -883,8 +948,10 @@ settle_verify() {
     case "$outcome" in
       PASS|FAIL)
         accept_record "$id"
+        if [[ "$ACC_OK" == 1 && "$outcome" == FAIL && -z "$ACC_FAIL" ]]; then ACC_OK=0; ACC_REASON='the reply says FAIL but the record has no FAIL block'; fi
         if [[ "$ACC_OK" == 1 ]]; then
           supported=$((supported + 1)); failed="$failed$ACC_FAIL"; notrun="$notrun$ACC_NOTRUN"
+          iput "$id" last_outcome SUPPORTED; iput "$id" sig ''
           for c in $ACC_PASS; do crits=$((crits + 1)); done
           record_take "$id" "$outcome" '' "$(trim "$ACC_FAIL")"
           item_line ok done "$id" "$(where "$id")$(iget "$id" ret_tail '')$(if [[ -n "$ACC_FAIL" ]]; then printf '%sFAIL:%s' "$(sep)" "$ACC_FAIL"; fi)"
@@ -916,14 +983,22 @@ settle_verify() {
         hit=1
         line=$(grep -h "^$c|" "$TASK"/evidence/checks/take-*.verdict "$TASK"/evidence/review/take-*.verdict 2>/dev/null | tail -n 1 || true)
         cls=$(printf '%s' "$line" | cut -d'|' -f6); sg=$(printf '%s' "$line" | cut -d'|' -f7)
-        iput "$owner" confirmed validator
         item_line fail failed "$owner" "$(where "$owner")$(sep)verify: $c ${sg:-failed}"
-        advance "$owner" FAIL "${cls:-capability}" "verify $c: ${sg:-failed}"
+        advance "$owner" FAIL "${cls:-capability}" "verify $c: ${sg:-failed}" validator validator
       done
-      [[ "$hit" == 1 ]] || printf '%s\tFAIL\t%s\tno produce item owns this criterion\n' "$c" "$(cat "$TASK/criteria/$c/type")" >> "$TASK/unowned-fail"
+      if [[ "$hit" == 0 ]]; then
+        unowned="$unowned $c"
+        printf '%s\tFAIL\t%s\tno produce item owns this criterion\n' "$c" "$(cat "$TASK/criteria/$c/type")" >> "$TASK/unowned-fail"
+      fi
     done
-    for id in "$@"; do [[ "$(iget "$id" status)" == ready ]] && iput "$id" status ready; done
+    # Validating the same workspace again cannot change the verdict: remember what failed.
+    rput failed_frozen "$(rget frozen '')"; rput unowned_fail "$(trim "$unowned")"
     say fail failed "$(printf '%-22s%s' verify "$supported/$total validators$(sep)failed:$failed$(sep)units $(rget used)/$BUDGET")"
+    if [[ -n "$unowned" ]]; then
+      say block blocked "$(printf '%-22s%s' verify "no item owns the failed criterion:$unowned")"
+    fi
+  elif [[ "$unsupported" == 0 ]] && verify_dead; then
+    say fail failed "$(printf '%-22s%s' verify "$supported/$total validators$(sep)a required validator was stopped, verification is incomplete$(sep)units $(rget used)/$BUDGET")"
   elif [[ "$unsupported" == 0 ]]; then
     : > "$TASK/verified"
     for id in "$@"; do
@@ -933,7 +1008,7 @@ settle_verify() {
       iput "$id" status accepted
     done
     for id in $(items); do [[ "$(iget "$id" status)" == done ]] && iput "$id" status accepted; done
-    rput validated "$(rget frozen_name)"
+    rput validated "$(rget frozen_name)"; rput failed_frozen ''; rput unowned_fail ''
     say ok passed "$(printf '%-22s%s' verify "$supported/$total validators$(sep)$crits/$crits criteria$(if [[ -n "$notrun" ]]; then printf '%snot run:%s' "$(sep)" "$notrun"; fi)$(sep)units $(rget used)/$BUDGET")"
   fi
   next_hint
@@ -972,7 +1047,7 @@ cmd_scope() {
 # ---- model gate ------------------------------------------------------------------------------
 cmd_gate() {
   load_task "${1:-}"; shift
-  local id impossible='' ev cheap=0 attop=0 take level me t dur outcome cls sg rest pass=0 c1 c2 c3 c4 c5 c6 vp=0 class used
+  local id impossible='' ev cheap=0 attop=0 take level me t dur outcome cls sg rest pass=0 c1 c2 c3 c4 c5 c6 owed class used source prev cur
   id=$(iid "${1:-}"); shift
   if [[ "${1:-}" == --narrowing-impossible ]]; then impossible=${2:-}; [[ -n "$impossible" ]] || die 'give the reason narrowing is impossible'; fi
   [[ "$(istage "$id")" == produce ]] || die 'only produce items may move to the expensive model'
@@ -987,25 +1062,32 @@ cmd_gate() {
   done < "$TASK/items/$id/history"
   class=$(iget "$id" class '')
   used=$(rget used)
-  if verify_pending; then vp=$N_V; fi
+  owed=$(owed_units "$id"); source=$(iget "$id" class_source worker)
   c1=FAIL; [[ "$attop" -ge 1 && "$cheap" -ge "$N_GATE_MIN" ]] && c1=PASS
   c2=PASS
   t=2
-  while [[ "$t" -le "$(iget "$id" takes)" ]]; do [[ -n "$(iget "$id" "corr.$t" '')" ]] || c2=FAIL; t=$((t + 1)); done
-  c3=FAIL; [[ "$class" == capability ]] && c3=PASS
+  prev=''
+  while [[ "$t" -le "$(iget "$id" takes)" ]]; do
+    # A retry that only repeats the previous instruction is the same approach again.
+    cur=$(iget "$id" "corr.$t" ''); cur=${cur#Take * ended }
+    if [[ -z "$cur" || "$cur" == "$prev" ]]; then c2=FAIL; fi
+    prev=$cur; t=$((t + 1))
+  done
+  # The producing worker's own word does not classify its failure: a diagnosis file or a validator must.
+  c3=FAIL; [[ "$class" == capability ]] && in_list "$source" 'diagnosis validator' && c3=PASS
   c4=FAIL; in_list "$(iget "$id" confirmed '')" 'check validator' && c4=PASS
   c5=FAIL; case "$(iget "$id" narrowed 0)" in 1|impossible) c5=PASS ;; esac
-  c6=FAIL; [[ $((used + WEIGHT + vp)) -le "$BUDGET" ]] && c6=PASS
+  c6=FAIL; [[ $((used + WEIGHT + owed)) -le "$BUDGET" ]] && c6=PASS
   for t in $c1 $c2 $c3 $c4 $c5 $c6; do [[ "$t" == PASS ]] && pass=$((pass + 1)); done
   {
     printf '# Escalation record: %s\n\n' "$(iname "$id")"
     printf 'Written by ledger.sh gate before any expensive-model dispatch. Result: %s/6.\n\n' "$pass"
     printf '1. %s — cheap model exhausted: %s cheap takes (minimum %s), %s at its top effort.\n' "$c1" "$cheap" "$N_GATE_MIN" "$attop"
-    printf '2. %s — every retry carried a correction that cites the prior record.\n' "$c2"
-    printf '3. %s — failure class: %s%s.\n' "$c3" "${class:-unclassified}" "$(if [[ -n "$(iget "$id" classify_evidence '')" ]]; then printf ' (evidence: %s)' "$(iget "$id" classify_evidence)"; fi)"
+    printf '2. %s — every retry carried its own correction citing the prior record; none repeated the previous instruction.\n' "$c2"
+    printf '3. %s — failure class: %s, classified by %s%s.\n' "$c3" "${class:-unclassified}" "$(if [[ "$source" == worker ]]; then printf 'the failing worker only (not accepted)'; else printf 'a %s' "$source"; fi)" "$(if [[ -n "$(iget "$id" classify_evidence '')" ]]; then printf ' (evidence: %s)' "$(iget "$id" classify_evidence)"; fi)"
     printf '4. %s — independent confirmation: %s.\n' "$c4" "$(confirmed_text "$(iget "$id" confirmed '')")"
     printf '5. %s — narrowing: %s.\n' "$c5" "$(narrowing_text "$id")"
-    printf '6. %s — budget: used %s + expensive call %s + validation %s of %s units.\n\n' "$c6" "$used" "$WEIGHT" "$vp" "$BUDGET"
+    printf '6. %s — budget: used %s + expensive call %s + still owed (other first takes, validation, reserve) %s of %s units.\n\n' "$c6" "$used" "$WEIGHT" "$owed" "$BUDGET"
     printf '| Take | Level | Model/effort | Outcome | Class | Failure | Correction given | Records |\n|---|---|---|---|---|---|---|---|\n'
     while IFS=$'\t' read -r take level me _ _ dur outcome cls sg rest; do
       printf '| %s | %s | %s | %s | %s | %s | %s | %s/take-%s.* |\n' "$take" "$level" "$me" "$outcome" "$cls" "$sg" "$(clean "$(iget "$id" "corr.$take" '-')" 80)" "$ev" "$take"
@@ -1017,20 +1099,26 @@ cmd_gate() {
     level_me "$id" "$from"; old="$ME_MODEL/$ME_EFFORT"
     level_me "$id" "$to"
     iput "$id" level "$to"; iput "$id" status retry; iput "$id" sigcount 0; iput "$id" conts 0
-    item_line model model "$id" "level $from$(arrow)$to$(sep)$old $(arrow) $ME_MODEL/$ME_EFFORT$(sep)gate 6/6$(sep)escalation.md"
+    item_line model model "$id" "level $from$(arrow)$to$(sep)$old $(arrow) $ME_MODEL/$ME_EFFORT$(sep)$(clean "$(iget "$id" sig 'capability failure')" 40)$(sep)gate 6/6$(sep)escalation.md"
     event model "$(iname "$id")" "gate 6/6 $ev/escalation.md"
+    sed -n '/^[1-6]\. /p' "$ev/escalation.md"
     printf 'next: ledger.sh dispatch TASK %s\n' "$(iname "$id")"
     return 0
   fi
   printf 'gate %s/6 for %s: no expensive dispatch. Record: %s\n' "$pass" "$(iname "$id")" "$ev/escalation.md"
-  [[ "$c1" == PASS ]] || printf 'next: condition 1 — dispatch another corrected take at the cheap model'"'"'s top effort: ledger.sh dispatch TASK %s --correction "…"\n' "$(iname "$id")"
+  sed -n '/^[1-6]\. /p' "$ev/escalation.md"
+  local diag
+  diag="plan a read-only map item, then classify with its report: item map why-$(islug "$id" | cut -c1-16) | Why does $(iname "$id") fail? Read the records under $ev. End the report with the lines class:, reproduced: and command:"
+  [[ "$c1" == PASS ]] || printf 'next: condition 1 — dispatch another corrected take at the cheap model'"'"'s top effort: ledger.sh dispatch TASK %s --correction "<what to do differently>"\n' "$(iname "$id")"
+  [[ "$c2" == PASS ]] || printf 'next: condition 2 — a retry repeated the previous instruction: ledger.sh dispatch TASK %s --correction "<what to do differently>"\n' "$(iname "$id")"
   if [[ "$c3" != PASS ]]; then
-    case "$class" in
-      ''|-) printf 'next: condition 3 — plan a read-only map item to diagnose it, then: ledger.sh classify TASK %s CLASS --evidence its-report\n' "$(iname "$id")" ;;
-      *) printf 'next: condition 3 — class "%s" never escalates the model: fix the cause (brief, environment, check, spec, ownership) or ledger.sh stop\n' "$class" ;;
-    esac
+    if [[ -z "$class" || "$class" == - || ( "$class" == capability && "$source" == worker ) ]]; then
+      printf 'next: condition 3 — %s. Then: ledger.sh classify TASK %s <class> --evidence <its report file>\n' "$diag" "$(iname "$id")"
+    else
+      printf 'next: condition 3 — class "%s" never escalates the model: fix the cause (brief, environment, check, spec, ownership) with ledger.sh dispatch TASK %s --correction "…", or ledger.sh stop TASK %s "<why>"\n' "$class" "$(iname "$id")" "$(iname "$id")"
+    fi
   fi
-  [[ "$c4" == PASS ]] || printf 'next: condition 4 — needs a failing check the script can re-run or a validator FAIL; plan a map item that writes one\n'
+  [[ "$c4" == PASS ]] || printf 'next: condition 4 — no check the script re-ran has failed and no validator reported a reproduced FAIL: %s (reproduced: yes needs a command: the script can re-run)\n' "$diag"
   [[ "$c6" == PASS ]] || printf 'next: condition 6 — the budget does not admit the expensive call: ledger.sh stop TASK %s budget\n' "$(iname "$id")"
 }
 cmd_classify() {
@@ -1042,10 +1130,29 @@ cmd_classify() {
   in_list "$class" 'capability omission environment throttle flaky ambiguity scope' || die "unknown class: $class"
   [[ -s "$evidence" ]] || die "evidence file is missing or empty: $evidence"
   grep -Eq "^[[:space:]]*class:[[:space:]]*$class[[:space:]]*$" "$evidence" || die "the evidence file must itself say 'class: $class'; the coordinator does not classify from memory"
-  iput "$id" class "$class"; iput "$id" classify_evidence "$evidence"
-  if grep -Eq '^[[:space:]]*reproduced:[[:space:]]*yes' "$evidence" && [[ -z "$(iget "$id" confirmed '')" ]]; then iput "$id" confirmed check; fi
+  iput "$id" class "$class"; iput "$id" class_source diagnosis; iput "$id" classify_evidence "$evidence"
+  if grep -Eq '^[[:space:]]*reproduced:[[:space:]]*yes' "$evidence" && [[ -z "$(iget "$id" confirmed '')" ]]; then
+    local command out
+    command=$(sed -n 's/^[[:space:]]*command:[[:space:]]*//p' "$evidence" | tail -n 1)
+    command=$(strip_ticks "$(trim "$command")")
+    out="$(evidence_dir "$id")/classify.out"; mkdir -p "$(evidence_dir "$id")"
+    if [[ -n "$command" ]]; then
+      run_check "$command" "$out" 300
+      if [[ "$RUN_EXIT" != 0 ]]; then iput "$id" confirmed check; printf 'reproduced: %s exits %s\n' "$(clean "$command" 60)" "$RUN_EXIT"
+      else printf 'note: the diagnosis says reproduced, but %s exits 0 here; the failure stays unconfirmed\n' "$(clean "$command" 60)"; fi
+    else printf 'note: the diagnosis says reproduced but names no command: line; the failure stays unconfirmed\n'; fi
+  fi
   event classify "$(iname "$id")" "$class $evidence"
   printf 'classified %s as %s\n' "$(iname "$id")" "$class"
+  next_hint
+}
+cmd_pinning() { # the coordinator found that the host overrides, hides or rejects the requested model or effort
+  load_task "${1:-}"; shift
+  [[ "${1:-}" == mismatch && -n "${2:-}" ]] || die 'write: ledger.sh pinning TASK mismatch "what the host overrides, hides or rejects"'
+  rput pinning mismatch
+  rput pinning_cause "$(clean "$(rget pinning_cause '')${2:+$(if [[ -n "$(rget pinning_cause '')" ]]; then printf '; '; fi)$2}" 160)"
+  event pinning - "$2"
+  say block blocked "$(printf '%-22s%s' pinning "known mismatch ($(clean "$2" 100)); continuing as best effort")"
   next_hint
 }
 cmd_answer() {
@@ -1096,12 +1203,16 @@ next_hint() {
       need-gate) any=1; printf 'next: gate %s — ledger.sh gate TASK %s (it writes escalation.md and decides)\n' "$(iname "$id")" "$(iname "$id")" ;;
       blocked) any=1; printf 'next: %s is blocked — ask the user or fix the environment, then: ledger.sh answer TASK %s "…" (or ledger.sh stop)\n' "$(iname "$id")" "$(iname "$id")" ;;
       ready|retry)
-        if [[ "$(istage "$id")" == verify ]]; then [[ "$(produce_open)" == 0 && -z "$(rget validated '')" ]] && produced_any && ready="$ready $(iname "$id")"
-        else ready="$ready $(iname "$id")"; fi ;;
+        if [[ "$(istage "$id")" == verify ]]; then [[ "$(produce_open)" == 0 && -z "$(rget validated '')" ]] && produced_any && ! verify_dead && ! verify_stale && ready="$ready $(iname "$id")"
+        elif deps_done "$id"; then ready="$ready $(iname "$id")"; fi ;;
     esac
   done
   if [[ -n "$ready" ]]; then printf 'next: ledger.sh dispatch TASK   (ready:%s)\n' "$ready"; return 0; fi
   [[ "$any" == 0 ]] || return 0
+  if verify_stale && [[ -n "$(rget unowned_fail '')" ]]; then
+    printf 'next: validation failed on %s, which no produce item owns. Plan a fix (ledger.sh plan TASK with: item produce <slug> | <the fix the validator asks for> | owns: <globs> | criteria: %s), or ledger.sh report TASK to end with it unresolved\n' "$(rget unowned_fail)" "$(rget unowned_fail | tr ' ' ',')"
+    return 0
+  fi
   if [[ "$nprod" == 0 ]]; then printf 'next: plan the produce items from the map reports: ledger.sh plan TASK\n'; return 0; fi
   printf 'next: ledger.sh report TASK\n'
 }
@@ -1127,7 +1238,7 @@ secret_scan() { # prints file names only, never values
   for name in $(env | sed -n 's/^\([A-Za-z_][A-Za-z0-9_]*\)=.*/\1/p' | grep -Ei '(secret|token|password|passwd|credential|api_?key|access_?key|private_?key)' || true); do
     value=${!name:-}
     [[ ${#value} -ge 8 ]] || continue
-    hits="$hits $(grep -rlF -- "$value" "$TASK/evidence" "$TASK/briefs" "$TASK/log.txt" "$TASK/decisions.md" 2>/dev/null | tr '\n' ' ' || true)"
+    hits="$hits $(grep -rlF -- "$value" "$TASK/evidence" "$TASK/briefs" "$TASK/items" "$TASK/criteria" "$TASK/log.txt" "$TASK/ledger.tsv" "$TASK/decisions.md" "$TASK/request.md" "$TASK/allowed-external.md" 2>/dev/null | tr '\n' ' ' || true)"
   done
   hits="$hits $(grep -rlE -- '(AKIA[0-9A-Z]{16}|-----BEGIN [A-Z ]*PRIVATE KEY-----|gh[pousr]_[A-Za-z0-9]{36}|xox[baprs]-[A-Za-z0-9-]{10,}|AIza[0-9A-Za-z_-]{35}|sk-[A-Za-z0-9_-]{32,})' "$TASK/evidence" "$TASK/briefs" 2>/dev/null | tr '\n' ' ' || true)"
   printf '%s' "$(trim "$hits")"
@@ -1159,7 +1270,17 @@ cmd_report() {
     done < "$f"
   done
   [[ ! -f "$TASK/mutations" ]] || muts=$(sort -u "$TASK/mutations" | wc -l | tr -d ' ')
-  case "$(rget pinning unverified)" in verified) verdict='Verified' ;; mismatch*) verdict="Known mismatch ($(rget pinning_cause))" ;; esac
+  # Verified only when the host showed, for every call, the settings that were requested.
+  local shown=0 calls=0
+  for id in $(items); do
+    [[ -f "$TASK/items/$id/history" ]] || continue
+    while IFS=$'\t' read -r take level me ran batch dur outcome cls sg units; do
+      calls=$((calls + 1)); [[ "$ran" == "$me" ]] && shown=$((shown + 1))
+    done < "$TASK/items/$id/history"
+  done
+  if [[ "$(rget pinning unverified)" == mismatch ]]; then verdict="Known mismatch ($(rget pinning_cause))"
+  elif [[ "$(rget mismatches 0)" != 0 ]]; then verdict="Known mismatch ($(rget mismatches) call(s) ran on other settings than requested)"
+  elif [[ "$calls" -gt 0 && "$shown" == "$calls" ]]; then verdict='Verified'; fi
   {
     printf 'Tier: %s%s\n' "$TIER" "$(if [[ -n "$(rget tier_from '')" ]]; then printf ' (promoted from %s)' "$(rget tier_from)"; fi)"
     printf 'Kind: %s\n' "$(rget kind)"
@@ -1173,7 +1294,7 @@ cmd_report() {
         case "$me" in "$N_EXP"/*) exp=$((exp + 1)) ;; */low) low=$((low + 1)) ;; */medium) med=$((med + 1)) ;; */high) high=$((high + 1)) ;; esac
       done < "$TASK/items/$id/history"
     done
-    printf 'Pinning: %s; %s call(s) ran on settings other than requested\n' "$verdict" "$(rget mismatches 0)"
+    printf 'Pinning: %s; %s of %s call(s) shown by the host as run on the requested settings, %s on other settings\n' "$verdict" "$shown" "$calls" "$(rget mismatches 0)"
     printf 'Parallelism: %s batches | peak %s concurrent | elapsed per batch:' "$(rget batch 0)" "$(rget peak 0)"
     b=1
     while [[ "$b" -le "$(rget batch 0)" ]]; do printf ' %s=%s' "$b" "$(elapsed "$(cat "$TASK/batches/$b/elapsed" 2>/dev/null || printf 0)")"; b=$((b + 1)); done
@@ -1199,7 +1320,7 @@ cmd_report() {
       "$(if [[ -s "$TASK/gap-changes" ]]; then tr '\n' ' ' < "$TASK/gap-changes"; else printf 'none'; fi)"
     printf 'External actions: %s; possible external changes flagged by the command scan: %s%s\n' "${external:-none reported}" "$muts" "$(if [[ "$muts" != 0 ]]; then printf ' (%s/mutations)' "$TASK"; fi)"
     printf 'Not covered by snapshots: external systems, ignored files\n'
-    printf 'Secrets: %s\n' "$(if [[ -n "$secrets" ]]; then printf 'FOUND in %s — redact before sharing anything' "$secrets"; else printf 'none found in briefs, evidence or log'; fi)"
+    printf 'Secrets: %s\n' "$(if [[ -n "$secrets" ]]; then printf 'FOUND in %s — redact before sharing anything' "$secrets"; else printf 'none found in the run files'; fi)"
     printf 'Usage: %s\n' "${usage_text:-unavailable}"
     printf 'Post-acceptance defects: not assessed\n'
     printf 'Run files: %s\n' "$TASK"
@@ -1245,15 +1366,21 @@ cmd_init() {
   # Pinning preflight: settings that override a per-call model or effort request.
   rput pinning unverified
   if [[ "$host" == claude ]]; then
-    for v in CLAUDE_CODE_EFFORT_LEVEL CLAUDE_CODE_SUBAGENT_MODEL_FORCE CLAUDE_CODE_SUBAGENT_MODEL ANTHROPIC_DEFAULT_HAIKU_MODEL ANTHROPIC_DEFAULT_SONNET_MODEL; do
+    # CLAUDE_CODE_SUBAGENT_MODEL alone is only a fallback below the per-call model, so it is no mismatch.
+    for v in CLAUDE_CODE_EFFORT_LEVEL ANTHROPIC_DEFAULT_HAIKU_MODEL ANTHROPIC_DEFAULT_SONNET_MODEL; do
       if [[ -n "${!v:-}" ]]; then cause="${cause:+$cause, }$v=${!v}"; fi
     done
+    if [[ -n "${CLAUDE_CODE_SUBAGENT_MODEL_FORCE:-}" ]]; then
+      cause="${cause:+$cause, }CLAUDE_CODE_SUBAGENT_MODEL_FORCE=$CLAUDE_CODE_SUBAGENT_MODEL_FORCE (forced model: ${CLAUDE_CODE_SUBAGENT_MODEL:-not stated})"
+    fi
   fi
   printf 'TASK=%s\n' "$TASK"
   printf 'workspace %s (%s snapshots, base captured)\n' "$workspace" "$mode"
   if [[ -n "$cause" ]]; then
     rput pinning mismatch; rput pinning_cause "$cause"
     printf 'pinning: KNOWN MISMATCH — %s. Read references/pinning.md, disclose it, continue as best effort.\n' "$cause"
+  elif [[ "$host" == codex ]]; then
+    printf 'pinning: requested, unverified (nothing to check from here on this host). Look at your spawn tool once: if it hides or rejects model or reasoning_effort, read references/pinning.md.\n'
   else
     printf 'pinning: requested, unverified (no override in the environment). Read references/pinning.md only if a dispatch rejects model or effort.\n'
   fi
@@ -1283,6 +1410,7 @@ case "$command" in
   gate) cmd_gate "$@" ;;
   classify) cmd_classify "$@" ;;
   answer) cmd_answer "$@" ;;
+  pinning) cmd_pinning "$@" ;;
   stop) cmd_stop "$@" ;;
   promote) cmd_promote "$@" ;;
   status) cmd_status "$@" ;;

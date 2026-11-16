@@ -24,11 +24,40 @@ const read = (host, file) => readFileSync(join(skillDir(host), file), 'utf8');
 // The complete list of host-specific files. Everything else must be byte-identical.
 const hostSpecificFiles = new Set(['SKILL.md', 'references/pinning.md', 'agents/openai.yaml']);
 
-// The complete list of host-specific SKILL.md lines: Claude-only frontmatter, compatibility, title,
-// how the script path is found, the --host flag, the ladder header, rule and rows, the numbers rows,
-// the expensive-call weight, and the Dispatch heading and paragraph.
-const hostSpecificLines =
-  /^(disable-model-invocation: |argument-hint: |allowed-tools: |compatibility: |# Escalating agents for |`LEDGER` below means | {3}`LEDGER init --host |\| Level +\| Model|\| ----- \| -|\| [1-4] +\| `|\| [A-D] +\| \d|A cheap call costs 1 unit and a level 4 call |## Dispatch \(|For each `dispatch` block )/;
+// Host-specific SKILL.md content, enumerated. Lines that are wholly host-specific are dropped; lines
+// that mix a host identifier with a shared rule are normalised, so the shared part is still compared.
+const sharedRules = {
+  dropLine: /^(disable-model-invocation: |argument-hint: |allowed-tools: |compatibility: |# Escalating agents for |\| [A-D] +\| \d+ +\| \d+ +\| \d+ +\|$|For each `dispatch` block )/,
+  normalize: [
+    [/ {2,}/g, ' '],
+    [/-{3,}/g, '---'],
+    [/^`LEDGER` below means .*?\. Run it;/, '`LEDGER` below means PATH. Run it;'],
+    [/--host (claude|codex) /, '--host HOST '],
+    [/^\| Level \| Model \| `(?:reasoning_)?effort` \|/, '| Level | Model | EFFORT |'],
+    [/^\| ([1-4]) \| `[^`]+` \| `(low|medium|high)` \| /, '| $1 | MODEL | `$2` | '],
+    [/a level 4 call \d+\./, 'a level 4 call N.'],
+    [/^## Dispatch \(.*\)$/, '## Dispatch (HOST)'],
+  ],
+};
+// Sentences of the host-specific Dispatch paragraph that must read the same on both hosts.
+const sharedDispatchSentences = [
+  'Blocks that say `barrier=yes` are validators:',
+  'make no other tool call until every one of them has returned, so a verification cycle returns whole',
+  '`continue=same-worker` means:',
+  'run `LEDGER defer TASK <the refused items>`',
+  'If the host shows the model or effort a worker really ran on, add `--ran <model>/<effort>` to its `result`.',
+  'read `references/pinning.md`.',
+];
+const hostTokens = {
+  claude: {
+    required: ['`Agent`', 'subagent_type: "general-purpose"', '`SendMessage`', 'Concurrent subagent limit reached', 'subagent_type: "fork"', '`Explore`', '`run_in_background`', '--host claude'],
+    forbidden: /spawn_agent|reasoning_effort|fork_turns|followup_task|wait_agent|task_name|--slots <free|gpt-6|--host codex/,
+  },
+  codex: {
+    required: ['`spawn_agent`', '`task_name`', '`reasoning_effort`', 'fork_turns: "none"', '`wait_agent`', '`followup_task`', '--slots <free slots>', 'A parent at `ultra`', '--host codex'],
+    forbidden: /subagent_type|SendMessage|run_in_background|`Agent`|CLAUDE_|\bhaiku\b|\bsonnet\b|Concurrent subagent limit|--host claude/,
+  },
+};
 
 const numbers = (host) => {
   const out = success(execute('bash', [join(skillDir(host), 'scripts', 'ledger.sh'), 'numbers', host], repoRoot));
@@ -51,19 +80,36 @@ describe('one methodology, two hosts', () => {
       if (hostSpecificFiles.has(file)) continue;
       assert.ok(readFileSync(join(claude.dir, file)).equals(readFileSync(join(codex.dir, file))), `${file} differs between hosts`);
     }
-    for (const file of ['scripts/ledger.sh', 'scripts/agent-snapshot.sh', 'references/briefs/map.md', 'references/briefs/produce.md', 'references/briefs/repair.md', 'references/briefs/verify.md']) {
+    for (const file of ['scripts/ledger.sh', 'scripts/agent-snapshot.sh', 'references/briefs/map.md', 'references/briefs/produce.md', 'references/briefs/repair.md', 'references/briefs/escalated.md', 'references/briefs/verify.md']) {
       assert.ok(claudeFiles.includes(file), `${file} is shipped`);
     }
   });
 
-  it('keeps SKILL.md identical outside the enumerated host-specific lines', () => {
-    assertSharedText(skills, { dropLine: hostSpecificLines });
+  it('keeps SKILL.md identical outside the enumerated host-specific content', () => {
+    assertSharedText(skills, sharedRules);
     for (const { host, document } of skills) {
-      const specific = document.split('\n').filter((line) => hostSpecificLines.test(line));
-      assert.ok(specific.length <= 20, `${host}: ${specific.length} host-specific lines`);
+      const dropped = document.split('\n').filter((line) => sharedRules.dropLine.test(line));
+      assert.ok(dropped.length <= 10, `${host}: ${dropped.length} wholly host-specific lines`);
+      const dispatch = document.split('\n').find((line) => line.startsWith('For each `dispatch` block '));
+      assert.ok(dispatch, `${host}: Dispatch paragraph`);
+      for (const sentence of sharedDispatchSentences) assert.ok(dispatch.includes(sentence), `${host}: Dispatch says: ${sentence}`);
     }
     const sections = (document) => document.split('\n').filter((line) => line.startsWith('## ')).map((line) => line.replace(/ \(.*\)$/, ''));
     assert.deepEqual(sections(codex.document), sections(claude.document), 'same section order');
+  });
+
+  it('names only its own host\'s tools, parameters and models', () => {
+    for (const { host, document } of skills) {
+      const pinning = read(host, 'references/pinning.md');
+      for (const token of hostTokens[host].required) assert.ok(document.includes(token), `${host}: SKILL.md names ${token}`);
+      assert.doesNotMatch(document, hostTokens[host].forbidden, `${host}: SKILL.md names another host's identifier`);
+      assert.doesNotMatch(pinning, hostTokens[host].forbidden, `${host}: pinning.md names another host's identifier`);
+      assert.match(pinning, /LEDGER pinning TASK mismatch/, `${host}: pinning.md says how to record a mismatch`);
+    }
+    // The verdict paragraph is shared wording inside a host-specific file.
+    const verdicts = (host) => read(host, 'references/pinning.md').split('\n').find((line) => line.startsWith('Every call has three facts'));
+    assert.ok(verdicts('claude'));
+    assert.equal(verdicts('codex'), verdicts('claude'));
   });
 
   it('replaces both earlier skills and states no sibling rule', () => {
@@ -82,7 +128,7 @@ frontmatterSuite(skills);
 describe('frontmatter and host metadata', () => {
   it('follows each host\'s own conventions', () => {
     const fm = parseFrontmatter(claude.document).frontmatter;
-    assert.equal(fm['allowed-tools'], 'Bash(${CLAUDE_SKILL_DIR}/scripts/ledger.sh *)');
+    assert.equal(fm['allowed-tools'], 'Bash(${CLAUDE_SKILL_DIR}/scripts/ledger.sh *) Bash(bash ${CLAUDE_SKILL_DIR}/scripts/ledger.sh *)');
     assert.match(claude.document, /`\$\{CLAUDE_SKILL_DIR\}\/scripts\/ledger\.sh`/);
     assert.equal(parseFrontmatter(codex.document).frontmatter['allowed-tools'], undefined);
     assert.doesNotMatch(codex.document, /CLAUDE_SKILL_DIR/);
@@ -189,12 +235,14 @@ describe('numbers', () => {
   it('lets one item climb the whole ladder inside its take limit and inside every tier budget', () => {
     for (const host of ['claude', 'codex']) {
       const n = numbers(host);
-      // Three cheap levels, an omission retry, the narrowing take, any extra cheap takes the gate demands, the expensive take.
-      const cheapTakes = Math.max(5, Number(n.A.gate_min_cheap_takes) + 1);
-      assert.ok(cheapTakes + 1 <= Number(n.A.takes_produce), `${host}: takes`);
+      // The shortest climb: the gate's minimum of cheap takes (three levels and the narrowing take among them),
+      // one map item to classify the failure, then the expensive call with the reserve the gate still demands.
+      const cheapTakes = Number(n.A.gate_min_cheap_takes);
+      assert.ok(cheapTakes >= 4 && cheapTakes + 1 <= Number(n.A.takes_produce), `${host}: takes`);
       for (const tier of ['A', 'B', 'C', 'D']) {
-        const validation = 2 * Number(n[tier].validators);
-        assert.ok(cheapTakes + Number(n.A.expensive_units) + validation <= Number(n[tier].budget), `${host} tier ${tier}: budget`);
+        const validators = Number(n[tier].validators);
+        const atGate = cheapTakes + 1 + Number(n.A.expensive_units) + validators + (1 + validators);
+        assert.ok(atGate <= Number(n[tier].budget), `${host} tier ${tier}: ${atGate} units at the gate, budget ${n[tier].budget}`);
       }
     }
   });
@@ -257,7 +305,7 @@ describe('context size', () => {
   });
 
   it('gives workers complete, short templates and keeps the coordinator out of them', () => {
-    for (const stage of ['map', 'produce', 'repair', 'verify']) {
+    for (const stage of ['map', 'produce', 'repair', 'escalated', 'verify']) {
       const text = read('claude', `references/briefs/${stage}.md`);
       assert.ok(Buffer.byteLength(text) <= 3_500, `${stage}: template size`);
       assert.match(text, /Do not delegate, start other agents, invoke any orchestration skill, or run any snapshot or ledger script\./, `${stage}: no delegation`);

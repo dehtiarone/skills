@@ -84,7 +84,7 @@ export function block(criterion, command, decisive, extra = {}) {
 
 /** Parse the `dispatch …` lines a coordinator would act on. */
 export function dispatches(output) {
-  return [...output.matchAll(/^dispatch (\S+) \| model=(\S+) \| effort=(\S+) \| background=(\S+) \| continue=(\S+)\n {2}(.+)\n {2}(.+)$/gm)].map(
-    ([, item, model, effort, background, cont, first, second]) => ({ item, model, effort, background, continue: cont, prompt: `${first}\n${second}` }),
+  return [...output.matchAll(/^dispatch (\S+) \| model=(\S+) \| (effort|reasoning_effort)=(\S+) \| barrier=(\S+) \| continue=(\S+)\n {2}(.+)\n {2}(.+)$/gm)].map(
+    ([, item, model, effortName, effort, barrier, cont, first, second]) => ({ item, model, effortName, effort, barrier, continue: cont, prompt: `${first}\n${second}` }),
   );
 }

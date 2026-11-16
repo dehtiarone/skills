@@ -14,7 +14,7 @@ item produce greet-text | Make bin/greet print hello, world | owns: bin/greet | 
 item produce farewell-text | Make bin/farewell print goodbye, world | owns: bin/farewell | criteria: C2
 `;
 const oneItem = `
-criterion C1 behavioral | bin/greet prints "hello, world"
+criterion C1 behavioral | bin/greet prints "hello, world" | check: bin/greet
 item produce greet-text | Make bin/greet print hello, world | owns: bin/greet | criteria: C1
 `;
 const good = (run, slug, take, criterion, name, text) => {
@@ -47,7 +47,7 @@ describe('first attempts and the progress log', () => {
         }
         const validators = dispatches(run.dispatch());
         assert.equal(validators.length, tier === 'D' ? 2 : 1, `${host} ${tier}: validators`);
-        for (const v of validators) assert.deepEqual([v.model, v.effort, v.background], [cheap, 'low', 'no'], `${host} ${tier}: ${v.item}`);
+        for (const v of validators) assert.deepEqual([v.model, v.effort, v.barrier, v.effortName], [cheap, 'low', 'yes', host === 'claude' ? 'effort' : 'reasoning_effort'], `${host} ${tier}: ${v.item}`);
       }
     }
   });
@@ -205,7 +205,7 @@ describe('model gate', () => {
       const record = run.evidence('greet-text', 'escalation.md');
       const refused = run.ok('gate', run.task, 'produce/greet-text');
       assert.match(refused, /^gate [3-5]\/6 for produce\/greet-text: no expensive dispatch/m);
-      assert.match(refused, /condition 3 — plan a read-only map item to diagnose it/);
+      assert.match(refused, /condition 3 — plan a read-only map item, then classify with its report: item map why-greet-text \| Why does produce\/greet-text fail\?/);
       assert.match(readFileSync(record, 'utf8'), /^3\. FAIL — failure class: unclassified/m);
       assert.doesNotMatch(run.log(), /⇧ model/);
       const diagnosis = join(run.task, 'evidence', 'why.md');
@@ -221,7 +221,7 @@ describe('model gate', () => {
         run.ok('classify', run.task, 'produce/greet-text', 'capability', '--evidence', diagnosis);
       }
       const opened = run.ok('gate', run.task, 'produce/greet-text');
-      assert.match(opened, new RegExp(`^⇧ model {4}produce/greet-text {4}level 3→4 · \\S+/high → ${expensive.replace('.', '\\.')}/high · gate 6/6 · escalation\\.md$`, 'm'));
+      assert.match(opened, new RegExp(`^⇧ model {4}produce/greet-text {4}level 3→4 · \\S+/high → ${expensive.replace('.', '\\.')}/high · C1: decisive line not in output #\\d+ · gate 6/6 · escalation\\.md$`, 'm'));
       const text = readFileSync(record, 'utf8');
       for (let n = 1; n <= 6; n++) assert.match(text, new RegExp(`^${n}\\. PASS — `, 'm'), `${host}: condition ${n}`);
       assert.match(text, /\| 3 \| 3 \| \S+\/high \| FAIL\(check\) \|/);
@@ -271,7 +271,7 @@ describe('evidence acceptance', () => {
 
   it('rejects a validator PASS that is vacuous, unexecuted or weaker than the criterion, and moves that validator up one level', (t) => {
     const cases = [
-      [block('C1', 'true', 'ok'), /C1: no decisive output line quoted/],
+      [block('C1', 'true', undefined), /C1: no decisive output line quoted/],
       [block('C1', 'true', 'looks fine'), /C1: true printed nothing/],
       [block('C1', 'bin/absent', 'hello, world'), /C1: bin\/absent exit 127/],
       [block('C1', 'bin/greet', 'hello, world', { type: 'inspection', cite: 'bin/greet:2' }), /evidence type inspection does not satisfy a behavioral criterion/],
@@ -408,7 +408,7 @@ describe('tier D', () => {
     run.result('produce/greet-text', 'DONE');
     const out = run.dispatch();
     assert.match(out, /^▶ batch 2 {2}verify · 2 subagents · units 3\/36$/m);
-    assert.deepEqual(dispatches(out).map((d) => [d.item, d.effort, d.background]), [['verify/checks', 'low', 'no'], ['verify/review', 'low', 'no']]);
+    assert.deepEqual(dispatches(out).map((d) => [d.item, d.effort, d.barrier]), [['verify/checks', 'low', 'yes'], ['verify/review', 'low', 'yes']]);
     assert.match(run.brief('verify/review', 1), /^Your criteria: R1$/m);
     assert.match(run.brief('verify/review', 1), /^Integrated patch: .*integrated-post-1\.patch$/m);
     assert.match(readFileSync(join(run.task, 'evidence/integrated-post-1.patch'), 'utf8'), /\+echo "hello, world"/);
@@ -543,5 +543,226 @@ describe('workspaces outside git and the final report', () => {
     assert.match(report, /^Secrets: FOUND in .*greet-text\/take-1\.report\.md/m);
     assert.doesNotMatch(report, /tok-live/);
     assert.match(report, /^Tier: D \(promoted from B\)$/m);
+  });
+});
+
+describe('review regressions', () => {
+  const toGate = (run) => {
+    run.plan(oneItem);
+    for (let take = 1; take <= 4; take++) {
+      if (take === 4) run.dispatch('produce/greet-text', '--narrow', 'only the echoed text');
+      else run.dispatch();
+      bad(run, 'greet-text', take, 'C1', 'greet', `wrong ${take}`, 'hello, world');
+      run.result('produce/greet-text', 'DONE');
+    }
+  };
+  const diagnose = (run, lines) => {
+    const file = join(run.task, 'evidence', 'why.md');
+    writeFileSync(file, `${lines.join('\n')}\n`);
+    return file;
+  };
+
+  it('does not let the failing worker classify its own failure, nor a missing record count as a reproduced failure', (t) => {
+    const run = startRun(t);
+    run.plan(oneItem);
+    for (let take = 1; take <= 4; take++) {
+      if (take === 4) run.dispatch('produce/greet-text', '--narrow', 'only the echoed text');
+      else run.dispatch();
+      // The worker claims a capability failure and leaves no record the script could re-run.
+      run.result('produce/greet-text', 'FAIL', '--class', 'capability', '--sig', `too hard ${take}`);
+    }
+    assert.equal(run.field('produce/greet-text', 'status'), 'need-gate');
+    const refused = run.ok('gate', run.task, 'produce/greet-text');
+    assert.match(refused, /^gate 4\/6 /m);
+    assert.match(refused, /^3\. FAIL — failure class: capability, classified by the failing worker only \(not accepted\)\.$/m);
+    assert.match(refused, /^4\. FAIL — independent confirmation: none/m);
+    assert.match(refused, /^next: condition 4 — .*item map why-greet-text/m);
+    assert.match(refused, /^6\. PASS — budget: used 4 \+ expensive call 8 \+ still owed \(other first takes, validation, reserve\) 3 of 24 units\.$/m);
+    // A diagnosis that claims a reproduction the script cannot repeat changes the class but confirms nothing.
+    const out = run.ok('classify', run.task, 'produce/greet-text', 'capability', '--evidence', diagnose(run, ['class: capability', 'reproduced: yes', 'command: true']));
+    assert.match(out, /the diagnosis says reproduced, but true exits 0 here/);
+    assert.match(run.ok('gate', run.task, 'produce/greet-text'), /^gate 5\/6 /m);
+    run.ok('classify', run.task, 'produce/greet-text', 'capability', '--evidence', diagnose(run, ['class: capability', 'reproduced: yes', 'command: test "$(bin/greet)" = "hello, world"']));
+    assert.match(run.ok('gate', run.task, 'produce/greet-text'), /⇧ model {4}produce\/greet-text/);
+  });
+
+  it('fails gate condition 2 when a retry only repeats the previous instruction', (t) => {
+    const run = startRun(t);
+    run.plan(oneItem);
+    run.dispatch();
+    run.result('produce/greet-text', 'FAIL', '--sig', 'first');
+    for (let take = 2; take <= 3; take++) {
+      run.dispatch('produce/greet-text', '--correction', 'Try harder');
+      run.result('produce/greet-text', 'FAIL', '--sig', `sig ${take}`);
+    }
+    run.dispatch('produce/greet-text', '--narrow', 'only the echoed text');
+    bad(run, 'greet-text', 4, 'C1', 'greet', 'wrong', 'hello, world');
+    run.result('produce/greet-text', 'DONE');
+    const out = run.ok('gate', run.task, 'produce/greet-text');
+    assert.match(out, /^2\. FAIL — /m);
+    assert.match(out, /^next: condition 2 — a retry repeated the previous instruction: ledger\.sh dispatch TASK produce\/greet-text --correction/m);
+  });
+
+  it('never dispatches a gated item only to stop it for budget: the gate uses the dispatch formula', (t) => {
+    const run = startRun(t);
+    toGate(run);
+    const file = diagnose(run, ['class: capability', 'reproduced: no']);
+    run.ok('classify', run.task, 'produce/greet-text', 'capability', '--evidence', file);
+    // 24 - 8 (the call) - 3 (validation and reserve) = 13 is the last value that admits it.
+    writeFileSync(join(run.task, 'run/used'), '14\n');
+    assert.match(run.ok('gate', run.task, 'produce/greet-text'), /^6\. FAIL — budget: used 14 \+ expensive call 8 \+ still owed .* 3 of 24 units/m);
+    writeFileSync(join(run.task, 'run/used'), '13\n');
+    assert.match(run.ok('gate', run.task, 'produce/greet-text'), /gate 6\/6/);
+    const out = run.dispatch();
+    assert.deepEqual(dispatches(out).map((d) => [d.model, d.effort]), [['sonnet', 'high']]);
+    assert.equal(run.used(), 21);
+  });
+
+  it('gives the expensive model exactly one take, from a fresh brief', (t) => {
+    for (const [outcome, args, expected] of [
+      ['PARTIAL', ['--sig', 'half done'], /■ stopped {2}produce\/greet-text {4}take 5\/8 · level 4\/4 · sonnet\/high · ladder exhausted: half done/],
+      ['FAIL', ['--class', 'omission', '--sig', 'forgot a case'], /■ stopped {2}produce\/greet-text .* ladder exhausted: forgot a case/],
+      ['BLOCKED', ['--class', 'environment', '--sig', 'disk full'], /⏸ blocked {2}produce\/greet-text {4}environment on the expensive take, no automatic retry: disk full/],
+    ]) {
+      const run = startRun(t);
+      toGate(run);
+      run.ok('classify', run.task, 'produce/greet-text', 'capability', '--evidence', diagnose(run, ['class: capability', 'reproduced: no']));
+      run.ok('gate', run.task, 'produce/greet-text');
+      run.dispatch();
+      const brief = run.brief('produce/greet-text', 5);
+      assert.match(brief, /^# Escalated brief \(the one take on the stronger model\)/);
+      assert.match(brief, /^Escalation record \(why earlier takes failed\): .*\/evidence\/greet-text\/escalation\.md$/m);
+      assert.doesNotMatch(brief, /Narrowed scope/);
+      const used = run.used();
+      assert.match(run.result('produce/greet-text', outcome, ...args), expected);
+      assert.doesNotMatch(run.dispatch(), /^dispatch produce\/greet-text/m);
+      assert.equal(run.used(), used, `${outcome}: no second expensive call`);
+    }
+  });
+
+  it('does not pass tier D while its reviewer is stopped, and says the work is unverified', (t) => {
+    const run = startRun(t, { tier: 'D' });
+    run.plan(oneItem);
+    run.dispatch();
+    good(run, 'greet-text', 1, 'C1', 'greet', 'hello, world');
+    run.result('produce/greet-text', 'DONE');
+    for (let take = 1; take <= 3; take++) {
+      run.dispatch();
+      run.record('checks', take, [block('C1', 'bin/greet', 'hello, world')]);
+      run.result('verify/checks', 'PASS');
+      const out = run.result('verify/review', 'UNUSABLE', '--sig', 'no record');
+      assert.doesNotMatch(out, /✓ passed/);
+    }
+    assert.match(run.log(), /■ stopped {2}verify\/review {9}take 3\/4 · level 3\/3 · haiku\/high · ladder exhausted: no record/);
+    const next = run.dispatch();
+    assert.match(next, /note: verify\/checks is not dispatched: another validator was stopped, so verification cannot complete/);
+    assert.match(next, /^next: ledger\.sh report TASK$/m);
+    const report = run.report();
+    assert.match(report, /^■ run {6}ended with open work · 0\/1 items accepted · 1 unresolved/m);
+    assert.match(report, /^ {2}produce\/greet-text: produced, not verified$/m);
+    assert.match(report, /^ {2}verify\/review: ladder exhausted: no record$/m);
+  });
+
+  it('blocks on a review failure nobody owns instead of validating the same workspace again', (t) => {
+    const run = startRun(t, { tier: 'D' });
+    run.plan(oneItem);
+    run.dispatch();
+    good(run, 'greet-text', 1, 'C1', 'greet', 'hello, world');
+    run.write('bin/extra', 'echo unrequested\n');
+    run.result('produce/greet-text', 'DONE');
+    run.ok('scope', run.task, 'extend', 'bin/extra');
+    run.dispatch();
+    run.record('checks', 1, [block('C1', 'bin/greet', 'hello, world')]);
+    run.record('review', 1, ['criterion: R1\nverdict: FAIL\ntype: inspection\ncite: bin/extra:1\ndecisive: echo unrequested\nclass: scope\nsig: unrequested file']);
+    run.result('verify/checks', 'PASS');
+    const out = run.result('verify/review', 'FAIL');
+    assert.match(out, /^⏸ blocked {2}verify {16}no item owns the failed criterion: R1$/m);
+    assert.match(out, /^next: validation failed on R1, which no produce item owns\. Plan a fix .*criteria: R1\)/m);
+    const before = run.used();
+    assert.match(run.dispatch(), /nothing changed since the last validation FAIL/);
+    assert.equal(run.used(), before, 'no validator is paid for an unchanged workspace');
+    run.plan('item produce drop-extra | Remove bin/extra, which nobody asked for | owns: bin/extra | criteria: R1');
+    run.dispatch();
+    run.write('bin/extra', '');
+    run.sh('rm', ['bin/extra']);
+    run.record('drop-extra', 1, ['criterion: R1\nverdict: PASS\ntype: inspection\ncite: bin/greet:2\ndecisive: echo "hello, world"']);
+    run.result('produce/drop-extra', 'DONE');
+    const again = dispatches(run.dispatch());
+    assert.deepEqual(again.map((d) => [d.item, d.effort]), [['verify/checks', 'low'], ['verify/review', 'low']]);
+    assert.match(run.brief('verify/checks', 2), /^Correction: Fresh validation of a changed workspace\./m);
+  });
+
+  it('enforces take limits at dispatch and rejects a FAIL reply whose record fails nothing', (t) => {
+    const run = startRun(t);
+    run.plan(oneItem);
+    run.dispatch();
+    good(run, 'greet-text', 1, 'C1', 'greet', 'hello, world');
+    run.result('produce/greet-text', 'DONE');
+    run.dispatch();
+    run.record('checks', 1, [block('C1', 'bin/greet', 'hello, world')]);
+    assert.match(run.result('verify/checks', 'FAIL'), /unsupported record: the reply says FAIL but the record has no FAIL block/);
+    writeFileSync(join(run.task, 'items/verify.checks/takes'), '4\n');
+    assert.match(run.dispatch(), /■ stopped {2}verify\/checks .* take limit reached/);
+  });
+
+  it('accepts tier A only on a check fixed in the plan, applies a plan whole or not at all, and reserves validator slugs', (t) => {
+    const run = startRun(t, { tier: 'A' });
+    assert.match(run.planFails('request Change the greeting\ncriterion C1 behavioral | bin/greet prints hello, world\nitem produce greet-text | Change it | owns: bin/greet | criteria: C1'), /give criterion C1 a 'check:' command, or use tier B/);
+    assert.equal(existsSync(join(run.task, 'criteria/C1')), false, 'a rejected plan leaves nothing behind');
+    assert.equal(existsSync(join(run.task, 'request.md')), false);
+    run.plan('request Change the greeting\ncriterion C1 behavioral | bin/greet prints hello, world | check: test "$(bin/greet)" = "hello, world" && echo named-ok\nitem produce greet-text | Change it | owns: bin/greet | criteria: C1');
+    assert.equal(readFileSync(join(run.task, 'request.md'), 'utf8'), 'Change the greeting\n');
+    run.dispatch();
+    // The producer's own check says everything is fine; the plan's check decides.
+    run.record('greet-text', 1, [block('C1', 'echo reconciled ok', 'reconciled ok')]);
+    assert.match(run.result('produce/greet-text', 'DONE'), /✗ failed {3}produce\/greet-text .* C1: named check /);
+    const other = startRun(t, { tier: 'D' });
+    assert.match(other.planFails(`${oneItem}criterion C2 behavioral | x\nitem produce review | Review it | owns: bin/farewell | criteria: C2`), /slug 'review' is reserved for the validators/);
+    assert.equal(existsSync(join(other.task, 'items/produce.greet-text')), false, 'the earlier lines of a rejected plan are rolled back');
+  });
+
+  it('flags changing commands by basename and inside quoted SQL, and derives the pinning verdict from what ran', (t) => {
+    const run = startRun(t, { kind: 'infra', plain: true });
+    run.plan('criterion C1 command-output | buckets listed\ncriterion C2 command-output | rows counted\ncriterion C3 command-output | identity read\nitem produce audit | Audit | owns: report/ | criteria: C1,C2,C3');
+    run.dispatch();
+    const saved = run.evidence('audit', 'out.txt');
+    const record = (a, b, c) => [a, b, c].map((command, i) => `criterion: C${i + 1}\nverdict: PASS\ntype: command-output\ncommand: ${command}\nsaved: ${saved}\ndecisive: data`);
+    run.record('audit', 1, record('./tools/bin/aws s3api delete-bucket --bucket x', "psql -c 'delete from orders'", '/usr/local/bin/aws sts get-caller-identity'));
+    writeFileSync(saved, 'data\n');
+    const out = run.result('produce/audit', 'DONE', '--ran', 'haiku/medium');
+    assert.match(out, /C1: command may change an external system; C2: command may c/);
+    assert.doesNotMatch(out, /C3/);
+    assert.match(out, /\(requested haiku\/low, ran haiku\/medium\)/);
+    run.dispatch();
+    run.record('audit', 2, record('./tools/bin/aws s3api list-buckets', "psql -c 'select count(*) from orders'", 'aws sts get-caller-identity'));
+    run.result('produce/audit', 'DONE', '--ran', 'haiku/medium');
+    assert.match(run.report(), /^Pinning: Known mismatch \(1 call\(s\) ran on other settings than requested\); 1 of 2 call\(s\) shown by the host as run on the requested settings, 1 on other settings$/m);
+
+    const verified = startRun(t, { tier: 'A' });
+    verified.plan(oneItem);
+    verified.dispatch();
+    good(verified, 'greet-text', 1, 'C1', 'greet', 'hello, world');
+    verified.result('produce/greet-text', 'DONE', '--ran', 'haiku/low');
+    assert.match(verified.report(), /^Pinning: Verified; 1 of 1 call\(s\) shown by the host as run on the requested settings, 0 on other settings$/m);
+
+    const hidden = startRun(t, { host: 'codex' });
+    assert.match(hidden.init, /pinning: requested, unverified \(nothing to check from here on this host\)/);
+    hidden.plan(oneItem);
+    assert.match(hidden.ok('pinning', hidden.task, 'mismatch', 'spawn_agent hides model and reasoning_effort'), /⏸ blocked {2}pinning {15}known mismatch \(spawn_agent hides model and reasoning_effort\); continuing as best effort/);
+    const block1 = hidden.dispatch();
+    assert.match(block1, /^dispatch produce\/greet-text \| model=gpt-6-luna \| reasoning_effort=low \| barrier=no \| continue=no$/m);
+    assert.doesNotMatch(block1, /\beffort=low \| background|prompt|one message/);
+    good(hidden, 'greet-text', 1, 'C1', 'greet', 'hello, world');
+    hidden.result('produce/greet-text', 'DONE');
+    hidden.ok('stop', hidden.task, 'verify/checks', 'not needed for this test');
+    assert.match(hidden.report(), /^Pinning: Known mismatch \(spawn_agent hides model and reasoning_effort\)/m);
+  });
+
+  it('treats a fallback-only subagent model as no mismatch and names a forced one', (t) => {
+    assert.match(startRun(t, { env: { CLAUDE_CODE_SUBAGENT_MODEL: 'haiku' } }).init, /pinning: requested, unverified/);
+    const forced = startRun(t, { env: { CLAUDE_CODE_SUBAGENT_MODEL: 'opus', CLAUDE_CODE_SUBAGENT_MODEL_FORCE: '1' } });
+    assert.match(forced.init, /pinning: KNOWN MISMATCH — CLAUDE_CODE_SUBAGENT_MODEL_FORCE=1 \(forced model: opus\)/);
+    assert.match(forced.plan(oneItem), /pinning: known mismatch \(CLAUDE_CODE_SUBAGENT_MODEL_FORCE=1 \(forced model: opus\)\)$/m);
+    assert.match(startRun(t, { env: { CLAUDE_CODE_EFFORT_LEVEL: 'low' } }).init, /KNOWN MISMATCH — CLAUDE_CODE_EFFORT_LEVEL=low/);
   });
 });

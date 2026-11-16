@@ -21,7 +21,8 @@ const common = [
   'briefs-carry-stage-header', 'workers-start-cheap-low', 'first-attempts-cheap-low', 'effort-ceiling', 'every-dispatch-pins-model-and-effort',
   'no-expensive-first-attempt', 'expensive-dispatch-uses-high', 'no-expensive-before-gate', 'workers-are-general-purpose', 'no-validator-by-message',
   'validators-not-backgrounded', 'progress-log-format', 'effort-lines-carry-reason', 'model-lines-carry-gate', 'final-report-fields',
-  'coordinator-reads-only-run-files', 'coordinator-does-not-search', 'coordinator-does-not-read-scripts', 'ledger-init', 'dispatch-before-workers', 'ledger-report',
+  'coordinator-reads-only-run-files', 'coordinator-does-not-search', 'coordinator-does-not-read-scripts', 'coordinator-reads-nothing-by-shell',
+  'expensive-dispatch-carries-header', 'ledger-init', 'dispatch-before-workers', 'ledger-report',
 ];
 
 const cases = readdirSync(suite, { withFileTypes: true })
@@ -181,6 +182,10 @@ describe('dispatch graders against representative Agent inputs', () => {
     assert.ok(!passes(grader('every-dispatch-pins-model-and-effort'), agent('Produce', 'x', 1, 1, 'opus', 'low')));
     assert.ok(passes(grader('expensive-dispatch-uses-high'), agent('Produce', 'x', 6, 4, 'sonnet', 'high')));
     for (const effort of ['low', 'medium']) assert.ok(!passes(grader('expensive-dispatch-uses-high'), agent('Produce', 'x', 6, 4, 'sonnet', effort)), `sonnet/${effort}`);
+    const header = grader('expensive-dispatch-carries-header');
+    assert.ok(passes(header, agent('Produce', 'x', 6, 4, 'sonnet', 'high')) && passes(header, ok), 'a gated level 4 dispatch, and any cheap one');
+    assert.ok(!passes(header, encode({ prompt: 'Please just fix the parser.', model: 'sonnet', effort: 'high', subagent_type: 'general-purpose' })), 'a hand-written expensive dispatch');
+    assert.ok(!passes(header, agent('Produce', 'x', 3, 3, 'sonnet', 'high')) && !passes(header, agent('Verify', 'checks', 2, 4, 'sonnet', 'high')), 'expensive below level 4, or for a validator');
     assert.ok(passes(grader('expensive-dispatch-uses-high'), ok));
   });
 
@@ -318,7 +323,7 @@ describe('trace graders against stream-shaped traces', () => {
     const gated = grader('no-expensive-before-gate');
     const gateCall = bash(`/p/ledger.sh gate ${task} produce/greet-text`);
     const sonnet = event('msg_x1', agent('Produce', 'greet-text', 5, 4, 'sonnet', 'high'));
-    assert.match(real.gate, /^⇧ model {4}produce\/greet-text {4}level 3→4 · haiku\/high → sonnet\/high · gate 6\/6 · escalation\.md$/m);
+    assert.match(real.gate, /^⇧ model {4}produce\/greet-text {4}level 3→4 · haiku\/high → sonnet\/high · C1: decisive line not in output #\d+ · gate 6\/6 · escalation\.md$/m);
     assert.ok(passes(gated, trace(event('msg_g1', gateCall), result(gateCall.id, real.gate), sonnet)), 'gate, then the expensive take');
     assert.ok(passes(gated, escaped(trace(event('msg_g1', gateCall), result(gateCall.id, real.gate), sonnet))), 'escaped symbols');
     assert.ok(!passes(gated, trace(sonnet)), 'no gate at all');
@@ -345,8 +350,19 @@ describe('trace graders against stream-shaped traces', () => {
     const scripts = grader('coordinator-does-not-read-scripts');
     assert.ok(!passes(scripts, trace(event('msg_b1', bash('cat /p/skills/escalating-agents/scripts/ledger.sh')))) && !passes(scripts, trace(event('msg_b1', bash('sed -n 1,80p "/p/scripts/agent-snapshot.sh"')))) && !passes(scripts, trace(event('msg_b1', read('/p/scripts/ledger.sh')))));
     assert.ok(passes(scripts, trace(event('msg_b1', bash(`/p/scripts/ledger.sh status ${task}`)))) && passes(scripts, trace(event('msg_b1', bash(`bash "/p/scripts/ledger.sh" dispatch ${task}`)))));
+    const planThenDispatch = bash(`/p/scripts/ledger.sh plan ${task} <<'EOF'\ncriterion C1 behavioral | the flag is set | check: grep -q enabled config/flags.txt && echo set\nitem produce set-flag | Set the flag | owns: config/flags.txt | criteria: C1\nEOF\n/p/scripts/ledger.sh dispatch ${task}`);
+    assert.ok(passes(scripts, trace(event('msg_b1', planThenDispatch))), 'a check command in a plan line is not a read of the script');
+    const shell = grader('coordinator-reads-nothing-by-shell');
+    for (const command of ['cat src/parser.js', 'head -50 "README.md"', 'git diff HEAD', 'grep -rn greet .', 'find . -name "*.sh"', 'sed -n 1,40p lib/rows.sh']) {
+      assert.ok(!passes(shell, trace(event('msg_b1', bash(command)))), `the coordinator running: ${command}`);
+      assert.ok(passes(shell, trace(event('msg_s1', bash(command), 'toolu_0005'))), 'workers may');
+    }
+    for (const command of ['pwd', 'echo "$TMPDIR"', `/p/scripts/ledger.sh report ${task}`]) assert.ok(passes(shell, trace(event('msg_b1', bash(command)))), command);
+    assert.ok(passes(shell, trace(event('msg_b1', planThenDispatch))), 'plan lines may name check commands');
     const data = grader('coordinator-does-not-touch-data');
-    assert.ok(!passes(data, trace(event('msg_d1', bash('head -5 sources/north.csv')))) && !passes(data, trace(event('msg_d1', read('/work/sources/a.json')))));
+    assert.ok(!passes(data, trace(event('msg_d1', bash('head -5 sources/north.csv')))) && !passes(data, trace(event('msg_d1', read('/work/sources/a.json')))) && !passes(data, trace(event('msg_d1', bash('wc -l sources/*.csv')))));
+    assert.ok(passes(data, trace(event('msg_d1', bash(`/p/ledger.sh plan ${task} <<'EOF'\nitem produce north-totals | Sum sources/north.csv | owns: out/north.csv | criteria: C1\nEOF`)))), 'a plan line may name a source file');
+    assert.ok(passes(data, trace(event('msg_s1', bash('head -5 sources/north.csv'), 'toolu_0006'))), 'workers read the data');
     assert.ok(passes(data, trace(event('msg_d1', bash(`/p/ledger.sh plan ${task} <<'EOF'\nitem produce north-totals | Sum the north file | owns: out/north.csv | criteria: C1\nEOF`)))));
   });
 
@@ -374,7 +390,15 @@ describe('trace graders against stream-shaped traces', () => {
     assert.ok(passes(grader('final-report-fields'), real.report), 'the rendered report has every field');
     assert.ok(!passes(grader('final-report-fields'), real.report.replace(/^Escalations:.*\n/m, '')), 'Escalations is required');
     assert.ok(passes(grader('verification-passed'), trace(result('t', real.log))) && passes(grader('verification-passed'), escaped(trace(result('t', real.log)))));
-    assert.ok(passes(grader('gate-or-stop-recorded'), trace(result('t', real.gate))));
+    assert.ok(passes(grader('item-ends-gated-or-unresolved'), trace(result('t', real.gate))) && !passes(grader('item-ends-gated-or-unresolved'), trace(result('t', real.log.replace(/^.*(stopped|blocked|gate).*$/gm, '')))));
+    const conditions = grader('gate-prints-its-conditions');
+    assert.match(real.gate, /^4\. PASS — independent confirmation: reproducible failing check re-run by the script\.$/m);
+    assert.ok(passes(conditions, trace(result('t', real.gate))) && passes(conditions, trace(result('t', 'no gate in this run'))));
+    assert.ok(!passes(conditions, trace(result('t', 'gate 5/6 for produce/x: no expensive dispatch. Record: /tmp/x/escalation.md'))), 'a gate result without its conditions');
+    const steps = grader('rejected-validator-steps-up');
+    const rejected = '✗ failed   verify/checks         take 1/4 · level 1/3 · haiku/low · 0:20 · unsupported record: C1: true printed nothing';
+    assert.ok(passes(steps, `${rejected}\n↑ effort   verify/checks         level 1→2 · haiku/low → haiku/medium · unsupported record`) && passes(steps, real.log));
+    assert.ok(!passes(steps, `${rejected}\n✓ passed   verify                1/1 validators`), 'a rejected validator that is not moved up');
     assert.ok(passes(grader('stopped-for-no-progress'), '■ stopped  produce/greet-text    take 4/8 · level 3/4 · haiku/high · no progress: same failure at every level and after narrowing: C1'));
     assert.ok(!passes(grader('not-stopped-for-budget'), '■ stopped  produce/x  take 1/8 · level 2/4 · haiku/medium · budget does not admit another take'));
     assert.ok(passes(grader('tier-d-named'), '▶ run      tier D · 2 items · budget 36 units') && !passes(grader('tier-d-named'), '▶ run      tier B · 2 items'));

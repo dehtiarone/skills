@@ -8,11 +8,12 @@ Every call has three facts: what the brief requested, what the configuration all
 | ------- | ----------------- | ---------- |
 | `CLAUDE_CODE_EFFORT_LEVEL` | Replaces the per-call `effort`; the effort ladder collapses to fresh takes with corrections | Keep sending the requested effort; record what ran with `--ran` |
 | `CLAUDE_CODE_SUBAGENT_MODEL_FORCE` | One model is forced on every subagent; the `model` parameter may disappear from the `Agent` schema | Continue with the forced model; every call is a mismatch on model |
+| A call hides or rejects `model` or `effort` mid-run | The request cannot be honoured | Run `LEDGER pinning TASK mismatch "<what was hidden or rejected>"`, stop sending that parameter, continue |
 | `CLAUDE_CODE_SUBAGENT_MODEL` | Only a fallback: the per-call `model` still wins | No action |
 | `ANTHROPIC_DEFAULT_HAIKU_MODEL`, `ANTHROPIC_DEFAULT_SONNET_MODEL` | Change what the `haiku` and `sonnet` aliases resolve to; the target may not support effort | Continue; report the resolved model |
 | `maxEffortLevel`, `availableModels`, organisation caps | Can cap effort below the request or substitute a model | Continue; report what ran |
 
-The script checks the environment variables at `init`. It cannot see settings files or organisation policy, so also look at your own `Agent` tool schema once: pass `model` while the schema has it, pass `effort` while the schema has it, and stop sending a parameter the host rejected once. A host-forced effort above `high` or below `low` is a Known mismatch; never request one.
+The script checks the environment variables at `init` and reports a mismatch for all of them except the fallback. It cannot see settings files or organisation policy, so also look at your own `Agent` tool schema once: pass `model` while the schema has it, pass `effort` while the schema has it, and stop sending a parameter the host rejected once. A host-forced effort above `high` or below `low` is a Known mismatch: record it with `LEDGER pinning TASK mismatch "…"`; never request one. The report says **Verified** only when every `result` carried a `--ran` equal to the request.
 
 On another provider the aliases may resolve to different models. Never edit configuration and never start a nested CLI to work around a restriction.
 

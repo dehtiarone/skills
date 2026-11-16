@@ -4,8 +4,8 @@ description: Explicit-only orchestration that splits a code change, a cloud-infr
 license: MIT
 disable-model-invocation: true
 argument-hint: "<task>"
-allowed-tools: "Bash(${CLAUDE_SKILL_DIR}/scripts/ledger.sh *)"
-compatibility: Requires Bash 3.2+ and Git 2.31+ on macOS or Linux (Windows only via WSL), and a Claude Code whose Agent tool accepts `model` and `effort` (v2.1.293+).
+allowed-tools: "Bash(${CLAUDE_SKILL_DIR}/scripts/ledger.sh *) Bash(bash ${CLAUDE_SKILL_DIR}/scripts/ledger.sh *)"
+compatibility: Requires Bash 3.2+ and Git 2.31+ on macOS or Linux (Windows only via WSL), and a Claude Code whose Agent tool accepts `model` and `effort` and whose `haiku` alias is Haiku 5.5 (v2.1.293+).
 metadata:
   version: "2.0.0"
   author: dehtiarone
@@ -59,9 +59,9 @@ This skill runs only when the user invokes it by name. You are the coordinator: 
 | Tier | Choose when                                                                                                                                                                     | Stages                 | Verification                                             |
 | ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------- | -------------------------------------------------------- |
 | D    | It touches production or shared systems, is irreversible or costly, handles credentials, secrets or personal data, or yields numbers or recommendations someone will act on financially | Map → Produce → Verify | 2 validators: executed checks and an independent review  |
-| C    | Scope or cause is unknown, the task is substantial, or you cannot plan it without reading; the default                                                                        | Map → Produce → Verify | 1 validator                                              |
-| A    | Exactly one trivial, fully specified, reversible item with a concrete check                                                                                                   | Produce                | none: the script re-runs the check on the frozen state   |
-| B    | Anything else: a clear task you can plan from the request                                                                                                                     | Produce → Verify       | 1 validator                                              |
+| A    | Exactly one trivial, fully specified, reversible item whose check the request names (every criterion needs `check:`)                                                           | Produce                | none: the script runs the named check on the frozen state |
+| B    | A clear task you can plan from the request alone, without reading anything                                                                                                     | Produce → Verify       | 1 validator                                              |
+| C    | Anything else: unknown scope or cause, a substantial task, or one you cannot plan without reading                                                                              | Map → Produce → Verify | 1 validator                                              |
 
 A tier is promoted, never demoted, when a stage reveals more: `LEDGER promote TASK <tier> "<why>"`. Tier D gets more scrutiny, never a stronger first attempt. Examples for each kind and the tier D procedure: `references/tiers.md`.
 
@@ -87,7 +87,7 @@ A cheap call costs 1 unit and a level 4 call 8. The budget is a cap, not a targe
 
 ## Dispatch (Claude Code)
 
-For each `dispatch` block make one `Agent` call with `subagent_type: "general-purpose"`, `model` and `effort` exactly as printed, and the two printed lines as the whole `prompt`. Put the batch's calls in one message. Use `run_in_background` only where the block says `background=yes`; validators say `no`, so a verification cycle returns whole before anything else starts. Never use `subagent_type: "fork"` (it inherits your model and context) or `Explore` (it cannot write its report file). `continue=same-worker` means: send the two lines to that worker with `SendMessage` instead of a new call. On `Concurrent subagent limit reached`, run `LEDGER defer TASK <the refused items>`. If the host shows the model or effort a worker really ran on, add `--ran <model>/<effort>` to its `result`. If `init` reports a pinning mismatch or a call rejects `model` or `effort`, read `references/pinning.md`.
+For each `dispatch` block make one `Agent` call with `subagent_type: "general-purpose"`, `model` and `effort` exactly as printed, and the two indented lines as the whole `prompt`. Put the batch's calls in one message. Never use `subagent_type: "fork"` (it inherits your model and context) or `Explore` (it cannot write its report file). Blocks that say `barrier=yes` are validators: start them together and make no other tool call until every one of them has returned, so a verification cycle returns whole; never set `run_in_background` for them. `continue=same-worker` means: send the two lines to that worker with `SendMessage` instead of a new call. On `Concurrent subagent limit reached`, run `LEDGER defer TASK <the refused items>`. If the host shows the model or effort a worker really ran on, add `--ran <model>/<effort>` to its `result`. If `init` reports a pinning mismatch, or a call hides or rejects `model` or `effort`, read `references/pinning.md`.
 
 ## Evidence
 

@@ -19,7 +19,7 @@ verdict: PASS            (PASS | FAIL | NOT_RUN)
 type: behavioral         (must equal the criterion's evidence type)
 command: <one shell command, run from the workspace root>
 exit: 0                  (the exit status you observed)
-decisive: <one line copied literally from that command's output that shows the result>
+decisive: <one whole line copied literally from that command's output that shows the result>
 class: <FAIL only: capability | omission | scope | flaky. NOT_RUN: environment>
 sig: <FAIL only: 3-8 words naming what is wrong>
 reason: <NOT_RUN only: why the check could not run>
