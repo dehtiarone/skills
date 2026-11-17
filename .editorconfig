@@ -8,6 +8,6 @@ trim_trailing_whitespace = true
 indent_style = space
 indent_size = 2
 
-# Markdown may carry significant trailing whitespace; SKILL.md embeds a hashed script.
+# Markdown may carry significant trailing whitespace.
 [*.md]
 trim_trailing_whitespace = false

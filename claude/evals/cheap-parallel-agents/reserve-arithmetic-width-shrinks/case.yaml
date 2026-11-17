@@ -1,4 +1,0 @@
-schema_version: "1.1"
-name: reserve-arithmetic-width-shrinks
-context:
-  scaffold_script: fixture.sh
