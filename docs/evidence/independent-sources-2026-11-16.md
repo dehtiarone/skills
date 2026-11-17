@@ -87,7 +87,7 @@ This index lists every source behind a performance, cost or escalation decision 
 | Son et al., "SWE-Router", arXiv 2607.00053 (UCL) | Authors independent; **results measured on SWE-bench Verified (OpenAI-curated): excluded as evidence, kept as a design idea only** | The strong model is restarted from the original task, not from the weak model's trajectory |
 | Ganz et al., "The Handoff Tax", arXiv 2608.24358 | All authors at AWS; **primary coding study on SWE-bench Verified: excluded as evidence, kept as a design idea only** | Continuing a cheap trajectory with a strong model was dominated by a fresh strong run |
 | Kim et al., "Correlated Errors in Large Language Models", arXiv 2506.07962; Goel et al., arXiv 2502.04313 | Independent | Models tend to be wrong together, so a stronger model rescues only part of what a weaker one fails |
-| Sun et al., "What Effort Level Should I Choose?", arXiv 2610.34491 | Together AI; not Anthropic or OpenAI; simulated | Starting at the lowest effort and retrying higher after a failed check matched or beat a fixed top effort, with median savings of 15–41 %, given a reliable verifier |
+| Sun et al., "What Effort Level Should I Choose?", arXiv 2610.34491 | Together AI; not Anthropic or OpenAI; per-effort runs measured, ladders evaluated by simulation over them | Starting at the lowest effort and retrying higher after a failed check matched or beat a fixed top effort, with median savings of 15–41 %, given a reliable verifier |
 | Yang et al., "Ares", arXiv 2603.07915 (UCSB, Accenture) | Authors independent; the tool and web results stand; **the research results use BrowseComp-Plus, derived from OpenAI's BrowseComp: excluded** | `medium` captures most of `high`'s gain at far fewer reasoning tokens; `low` collapses on some tasks (eligible subsets only) |
 | Prasad et al., "ADaPT", arXiv 2311.05772 | Independent | Decomposing a task only after it fails beat plain retrying by up to 28–33 points |
 
@@ -107,7 +107,7 @@ With the excluded results removed, the rule "start the stronger model fresh from
 | Lu et al., "AgentRewardBench", arXiv 2504.08942 | Independent of both vendors | No LLM judge exceeded 70 % precision on agent trajectories |
 | Wang et al., "SWE-Review", arXiv 2607.06065 | Huawei authors; **dataset built from SWE-bench Verified issues: figures excluded** | LLM reviewers falsely approved about a fifth of a strong generator's patches, mostly citing passing tests |
 | Rawat, Flek, "Plausible but Wrong", arXiv 2604.25345; Beel et al., arXiv 2502.14297 | Independent | Silent wrong numbers are the dominant failure in agent-run scientific and data workflows |
-| Onweller et al., "Cited but Not Verified", arXiv 2605.06635 | PwC authors; not Anthropic or OpenAI | Deep-research citations resolve more than 94 % of the time, but the cited claim is supported only 39–77 % of the time |
+| Onweller et al., "Cited but Not Verified", arXiv 2605.06635 | PwC authors; not Anthropic or OpenAI; **queries drawn from DeepResearch Bench and OpenAI's BrowseComp with no per-benchmark breakdown: figures excluded** | Kept as a design idea only: a resolving citation is not a supported claim, so `source` evidence needs the quoted text and stays provisional without a check |
 
 No study gives a cap for read-only fan-out, and none compares no-progress detectors.
 

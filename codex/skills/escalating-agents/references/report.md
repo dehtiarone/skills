@@ -13,13 +13,13 @@ Parallelism: [batches | peak concurrent | elapsed per batch | no savings claim w
 Effort distribution (requested): [cheap low / medium / high; expensive]
 Escalations: [effort steps; model steps, each with its escalation.md]
 Verified: [criterion | result | evidence type | who verified it on which snapshot | check fixed by plan or worker]
-Check basis: [criteria that are PROVISIONAL: passed only on a check a worker chose]
+Check basis: [criteria that are PROVISIONAL: passed only on a check a worker chose, or on output a worker saved; criteria accepted by inspection only]
 Choices: [decisions]
 Unresolved checks/work: [items stopped or unverified, or none]
 Workspace: [validated snapshot; changes after validation; accepted changes outside any dispatch; files written by checks the script re-ran]
 External actions: [as reported; commands the script ran, refused to run, and flagged in worker records]
 Not covered by snapshots: external systems, ignored files
-Secrets: [none detected, or the files that hold one; values are withheld; detection is not a guarantee]
+Secrets: [produced files that hold a detected secret (blocks acceptance); evidence a value was withheld from; files that hold one; detection is not a guarantee]
 Usage: [measured, or unavailable]
 Post-acceptance defects: not assessed
 Run files: [TASK]
@@ -31,4 +31,4 @@ Rules for what you add around it:
 - Make no time or cost savings claim without a measured serial baseline.
 - Report actual external actions, not what was authorised.
 - If `Secrets` lists files, tell the user before sharing anything from `TASK`.
-- `state: complete` is the only success. `complete, PROVISIONAL` means every item was accepted but the listed criteria passed only a check a worker chose: say exactly that, never "done". Relay `incomplete` and `INVALID` as they are. If `report` exits non-zero the workspace could not be compared with the validated state: nothing is known about it.
+- `state: complete` is the only success. `PROVISIONAL` means every item was accepted but the listed criteria were not independently checked (a check a worker chose, or output a worker saved): say exactly that, never "done". Relay `incomplete` and `INVALID` as they are. If `report` exits non-zero the workspace could not be compared with the validated state: nothing is known about it.

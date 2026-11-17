@@ -97,7 +97,7 @@ describe('first attempts and the progress log', () => {
     assert.match(status, /^host claude · tier C · kind code · coordinator haiku\/low · units 2\/30 · batch 1 \(open\)/m);
     assert.match(status, /^produce\/greet-text {9}returned/m);
     assert.match(status, /^produce\/farewell-text {6}running {5}take 1\/8 · level 1\/4 · haiku\/low$/m);
-    assert.match(status, /^next: batch 1 is open; .*Still running: produce\/farewell-text\. If you no longer hold these workers \(after a compaction\): ledger\.sh reconcile TASK$/m);
+    assert.match(status, /^next: batch 1 is open; .*Still running: produce\/farewell-text\. If you no longer hold these workers \(after a compaction\): ledger\.sh reconcile TASK lists each one with its recorded worker id$/m);
     assert.match(status, /^acceptance: incomplete \(a batch is open\)$/m);
     assert.match(status, new RegExp(`^task ${run.task.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'm'));
   });
@@ -350,7 +350,7 @@ describe('evidence acceptance', () => {
     assert.match(run.result('verify/checks', 'PASS'), /✓ passed {3}verify {16}1\/1 validators · 2\/2 criteria · units 5\/24/);
     const report = run.report();
     assert.match(report, /^■ run {6}done, provisional · 2\/2 items accepted · 0 unresolved · \d+:\d\d · peak 2 parallel$/m);
-    assert.match(report, /^Outcome: 2\/2 items accepted, 0 unresolved; 5 units of 24 used; state: complete, PROVISIONAL \(no check fixed in the plan for: C1 C2\)$/m);
+    assert.match(report, /^Outcome: 2\/2 items accepted, 0 unresolved; 5 units of 24 used; state: PROVISIONAL \(every item accepted, but not independently checked: no check fixed in the plan for C1 C2\)$/m);
     assert.match(report, /^ {2}C2\|PASS\|behavioral\|verify\/checks take 2 on [a-z]+-[\d-]+\|worker$/m);
     assert.match(report, /^Check basis: PROVISIONAL for C1 C2: passed only a check a worker chose, which the script re-ran but cannot judge for relevance\./m);
   });
@@ -587,23 +587,34 @@ describe('review regressions', () => {
     assert.match(run.ok('gate', run.task, 'produce/greet-text'), /⇧ model {4}produce\/greet-text/);
   });
 
-  it('fails gate condition 2 when a retry only repeats the previous instruction', (t) => {
+  it('refuses a repeated correction before it costs a take, and lets one distinct retry repair gate condition 2', (t) => {
     const run = startRun(t);
     run.plan(oneItem);
     run.dispatch();
-    run.result('produce/greet-text', 'FAIL', '--sig', 'first');
-    for (let take = 2; take <= 3; take++) {
-      run.dispatch('produce/greet-text', '--correction', 'Try harder');
-      run.result('produce/greet-text', 'FAIL', '--sig', `sig ${take}`);
-    }
+    run.result('produce/greet-text', 'FAIL', '--sig', 'same failure');
+    run.dispatch('produce/greet-text', '--correction', 'Try harder');
+    run.result('produce/greet-text', 'FAIL', '--sig', 'same failure');
+    const used = run.used();
+    const refused = run.ledger('dispatch', run.task, 'produce/greet-text', '--correction', 'Try harder');
+    assert.notEqual(refused.status, 0);
+    assert.match(refused.stderr, /this repeats the correction given for take 2 of produce\/greet-text\. Nothing was dispatched and no take was spent/);
+    assert.equal(run.used(), used);
+    assert.equal(run.field('produce/greet-text', 'takes'), '2');
+    // Retries without a correction of the coordinator's own repeat the automatic instruction.
+    run.dispatch('produce/greet-text');
+    run.result('produce/greet-text', 'FAIL', '--sig', 'same failure');
     run.dispatch('produce/greet-text', '--narrow', 'only the echoed text');
     bad(run, 'greet-text', 4, 'C1', 'greet', 'wrong', 'hello, world');
     run.result('produce/greet-text', 'DONE');
     const out = run.ok('gate', run.task, 'produce/greet-text');
-    assert.match(out, /^2\. FAIL — /m);
-    assert.match(out, /^next: condition 2 — a retry repeated the previous instruction: ledger\.sh dispatch TASK produce\/greet-text --correction/m);
+    assert.match(out, /^2\. FAIL — the latest retry carried a correction of its own/m);
+    assert.match(out, /^next: condition 2 — the latest retry repeated the previous instruction\. One take with a different correction meets it: ledger\.sh dispatch TASK produce\/greet-text --correction/m);
+    run.dispatch('produce/greet-text', '--correction', 'Print the comma: read take-4.verdict first');
+    run.result('produce/greet-text', 'FAIL', '--sig', 'still wrong');
+    const again = run.ok('gate', run.task, 'produce/greet-text');
+    assert.match(again, /^2\. PASS — the latest retry carried a correction of its own citing the prior record; 1 earlier retry repeated/m);
+    assert.doesNotMatch(again, /condition 2/);
   });
-
   it('never dispatches a gated item only to stop it for budget: the gate uses the dispatch formula', (t) => {
     const run = startRun(t);
     toGate(run);
@@ -837,13 +848,13 @@ describe('second review regressions', () => {
     const report = run.report();
     assert.match(report, /^ {2}C1\|PASS\|behavioral\|verify\/checks take 2 on \S+\|worker$/m);
     assert.match(report, /^Check basis: PROVISIONAL for C1: passed only a check a worker chose, /m);
-    assert.match(report, /state: complete, PROVISIONAL \(no check fixed in the plan for: C1\)$/m);
+    assert.match(report, /state: PROVISIONAL \(every item accepted, but not independently checked: no check fixed in the plan for C1\)$/m);
     const bound = startRun(t);
     produced(bound);
     bound.dispatch();
     bound.record('checks', 1, [block('C1', 'bin/greet', 'hello, world')]);
     bound.result('verify/checks', 'PASS');
-    assert.match(bound.report(), /^Check basis: every executed criterion passed a check fixed in the plan, or none was executed$/m);
+    assert.match(bound.report(), /^Check basis: every executed or collected criterion passed a check fixed in the plan\. A plan check is trusted as written/m);
   });
 
   it('does not accept work whose required check was not run', (t) => {
@@ -1014,21 +1025,35 @@ describe('second review regressions', () => {
     assert.match(tight.dispatch(), /^next: no planned item fits what is left of the budget\./m);
   });
 
-  it('reconciles finished workers from their report files after a compaction and names the lost ones', (t) => {
+  it('after a compaction closes a take only for workers the coordinator names as ended in the host', (t) => {
     const run = startRun(t);
     run.plan(twoItems);
-    run.dispatch();
+    assert.match(run.dispatch(), /as each one starts, record the id the host gave it: ledger\.sh bind TASK STAGE\/SLUG <worker id>/);
+    assert.match(run.ok('bind', run.task, 'produce/greet-text', 'agent-11aa'), /^bound produce\/greet-text take 1 to worker agent-11aa$/m);
     good(run, 'greet-text', 1, 'C1', 'greet', 'hello, world');
     run.record('greet-text', 1, [block('C1', 'bin/greet', 'hello, world')], 'Changed bin/greet.\n\noutcome: DONE\nrecord: here\nopen: none\n');
+    // A finished report file is not proof that the worker stopped: nothing is recorded from it alone.
     const out = run.ok('reconcile', run.task);
-    assert.match(out, /^note: produce\/greet-text finished with DONE according to its report file; recording it$/m);
-    assert.match(out, /^note: produce\/farewell-text has no finished report for take 1: its worker is still running or was lost\..* ledger\.sh result TASK produce\/farewell-text UNUSABLE --sig "worker lost"$/m);
+    assert.match(out, /^note: produce\/greet-text take 1 runs in worker agent-11aa; report file present\. Look it up in the host: .* ledger\.sh reconcile TASK --stopped produce\/greet-text$/m);
+    assert.match(out, /^note: produce\/farewell-text take 1 runs in a worker whose id was never recorded; report file not written\./m);
+    assert.match(out, /^next: nothing is dispatched while a worker of this batch may still be writing\. If the host cannot show or stop a worker listed above, tell the user/m);
+    assert.equal(run.field('produce/greet-text', 'status'), 'running');
+    assert.match(run.status(), /^produce\/greet-text .* · worker: agent-11aa$/m);
+    const one = run.ok('reconcile', run.task, '--stopped', 'produce/greet-text');
+    assert.match(one, /^note: produce\/greet-text finished with DONE according to its report file; recording it$/m);
     assert.equal(run.field('produce/greet-text', 'status'), 'returned');
+    assert.equal(run.field('produce/farewell-text', 'status'), 'running');
     run.record('farewell-text', 1, null, 'Half way.\n\noutcome: PARTIAL\nclass: omission\nsignature: ran out of time\n');
-    const closed = run.ok('reconcile', run.task);
+    const closed = run.ok('reconcile', run.task, '--stopped', 'produce/farewell-text');
     assert.match(closed, /✓ done {5}produce\/greet-text/);
     assert.match(closed, /▶ retry {4}produce\/farewell-text same level · continue: ran out of time/);
     assert.notEqual(run.ledger('reconcile', run.task).status, 0, 'nothing to reconcile once the batch is closed');
+    // A worker the host shows as ended without a report is recorded as lost.
+    const lost = startRun(t);
+    lost.plan(oneItem);
+    lost.dispatch();
+    assert.match(lost.ok('reconcile', lost.task, '--stopped', 'produce/greet-text'), /^note: produce\/greet-text ended without a finished report for take 1; recording it as lost$/m);
+    assert.equal(lost.field('produce/greet-text', 'last_outcome'), 'UNUSABLE');
     // A worker id given with a result survives on disk for a later continuation.
     const kept = startRun(t);
     kept.plan(oneItem);
@@ -1179,5 +1204,142 @@ describe('third review regressions', () => {
     for (const c of ['C1', 'C2']) assert.doesNotMatch(readFileSync(run.evidence('greet-text', `take-1.${c}.out`), 'utf8'), new RegExp(secret));
     assert.match(readFileSync(run.evidence('greet-text', 'take-1.C2.out'), 'utf8'), /\[withheld:REVIEW_API_TOKEN\]\ncorrect/);
     assert.match(run.report(), /^Secrets: none detected/m);
+  });
+});
+
+describe('fourth review regressions', () => {
+  it('runs the plan’s check whatever the evidence type: a saved file cannot stand in for it', (t) => {
+    const run = startRun(t, { kind: 'infra' });
+    run.plan('criterion C1 command-output | The CLI returns GOOD | check: bin/greet | expect: GOOD\nitem produce inventory | Record the setting | owns: inventory.txt | criteria: C1');
+    run.dispatch();
+    run.write('inventory.txt', 'GOOD\n');
+    const invented = run.evidence('inventory', 'invented.txt');
+    const rec = block('C1', 'bin/greet', 'GOOD', { type: 'command-output', saved: invented });
+    run.record('inventory', 1, [rec]);
+    writeFileSync(invented, 'GOOD\n');
+    assert.match(run.result('produce/inventory', 'DONE'), /✗ failed {3}produce\/inventory .*C1: output lacks the expected text/);
+    assert.match(readFileSync(join(run.task, 'commands.log'), 'utf8'), /\tbin\/greet$/m);
+    assert.match(run.report(), /state: incomplete \(produce\/inventory is retry\)/);
+  });
+
+  it('reports evidence a worker saved as provisional, and makes a validator collect its own', (t) => {
+    const run = startRun(t, { kind: 'infra' });
+    run.plan('criterion C1 command-output | The account has the assets bucket\ncriterion C2 inspection | The report names it\nitem produce inventory | Write the report | owns: report.txt | criteria: C1,C2');
+    run.dispatch();
+    run.write('report.txt', 'assets\n');
+    const mine = run.evidence('inventory', 'buckets.json');
+    const blocks = (saved) => [
+      block('C1', 'aws s3api list-buckets', '"assets"', { type: 'command-output', saved }),
+      'criterion: C2\nverdict: PASS\ntype: inspection\ncite: report.txt:1\ndecisive: assets',
+    ];
+    run.record('inventory', 1, blocks(mine));
+    writeFileSync(mine, '{"Name": "assets"}\n');
+    run.result('produce/inventory', 'DONE');
+    run.dispatch();
+    run.record('checks', 1, blocks(mine));
+    assert.match(run.result('verify/checks', 'PASS'), /unsupported record: C1: a validator collects its own evidence: save it under /);
+    run.dispatch();
+    const own = run.evidence('checks', 'buckets.json');
+    run.record('checks', 2, blocks(own));
+    writeFileSync(own, '{"Name": "assets"}\n');
+    run.result('verify/checks', 'PASS');
+    const report = run.report();
+    assert.match(report, /state: PROVISIONAL \(every item accepted, but not independently checked: only evidence a worker saved for C1\)$/m);
+    assert.match(report, /^ {2}C1\|PASS\|command-output\|verify\/checks take 2 on \S+\|saved$/m);
+    assert.match(report, /^Check basis: PROVISIONAL for C1: accepted on output or a source copy a worker saved; .*By inspection only \(a validator read the cited lines; the script confirmed they exist, not what they mean\): C2\./m);
+    assert.match(run.log(), /done, provisional/);
+  });
+
+  it('refuses a plan check that only prints fixed text', (t) => {
+    const run = startRun(t, { tier: 'A' });
+    for (const check of ['echo GOOD', "bash -c 'printf GOOD'", 'true']) {
+      const err = run.planFails(`criterion C1 behavioral | bin/greet prints GOOD | check: ${check} | expect: GOOD\nitem produce greeting | Make it good | owns: bin/greet | criteria: C1`);
+      assert.match(err, /line 1: the check of criterion C1 only prints fixed text or returns a fixed status, so it cannot fail when the work is wrong/, check);
+    }
+    assert.ok(!existsSync(join(run.task, 'criteria/C1')));
+  });
+
+  it('is not complete while a criterion added after validation is unverified or unowned', (t) => {
+    const run = startRun(t);
+    run.plan(oneItem);
+    run.dispatch();
+    good(run, 'greet-text', 1, 'C1', 'greet', 'hello, world');
+    run.result('produce/greet-text', 'DONE');
+    run.dispatch();
+    run.record('checks', 1, [block('C1', 'bin/greet', 'hello, world')]);
+    run.result('verify/checks', 'PASS');
+    assert.match(run.status(), /^acceptance: complete$/m);
+    const added = run.plan('criterion C2 behavioral | bin/farewell prints "goodbye, world" | check: bin/farewell | expect: goodbye, world');
+    assert.match(added, /^note: criterion C2 was added after work was validated: nothing counts as accepted until it is verified too$/m);
+    assert.match(added, /^note: no produce item covers criterion C2: the run cannot complete until one does/m);
+    assert.match(added, /^next: ledger\.sh dispatch TASK {3}\(ready: verify\/checks\)$/m);
+    assert.match(run.status(), /^acceptance: incomplete \(produce\/greet-text is done\)$/m);
+    const early = run.report();
+    assert.match(early, /state: incomplete/);
+    assert.match(early, /^ {2}produce\/greet-text: produced, not verified$/m);
+    // The validator is asked for the new criterion too, and its failure is nobody's item yet.
+    run.dispatch();
+    assert.match(run.brief('verify/checks', 2), /^Your criteria: C1,C2$/m);
+    run.record('checks', 2, [block('C1', 'bin/greet', 'hello, world'), block('C2', 'bin/farewell', 'goodbye, world', { verdict: 'FAIL', exit: 1 })]);
+    assert.match(run.result('verify/checks', 'PASS'), /unsupported record: C2: reported FAIL but bin\/farewell exits 0/);
+    run.plan('item produce farewell-text | Make bin/farewell print goodbye, world | owns: bin/farewell | criteria: C2');
+    run.dispatch();
+    good(run, 'farewell-text', 1, 'C2', 'farewell', 'goodbye, world');
+    run.result('produce/farewell-text', 'DONE');
+    run.dispatch();
+    run.record('checks', 3, [block('C1', 'bin/greet', 'hello, world'), block('C2', 'bin/farewell', 'goodbye, world')]);
+    run.result('verify/checks', 'PASS');
+    assert.match(run.report(), /^Outcome: 2\/2 items accepted, 0 unresolved; \d+ units of 24 used; state: complete$/m);
+  });
+
+  it('treats an authorisation as covering exactly the command written, not one contained in it', (t) => {
+    const run = startRun(t, { tier: 'A', kind: 'infra' });
+    const marker = join(run.root, 'external-change');
+    run.write('tools/aws', `#!/usr/bin/env bash\nprintf 'invoked %s\\n' "$*" >> '${marker}'\necho changed\n`, 0o755);
+    const item = 'item produce inventory | Inventory | owns: report.txt | criteria: C1';
+    const dry = './tools/aws ec2 terminate-instances --instance-ids i-test --dry-run';
+    for (const check of ['./tools/aws ec2 terminate-instances --instance-ids i-test', './tools/aws ec2 terminate-instances --instance-ids i-other --dry-run', `${dry}; ./tools/aws ec2 terminate-instances --instance-ids i-test`]) {
+      const err = run.planFails(`allow ${dry}\ncriterion C1 behavioral | Instances inspected | check: ${check} | expect: changed\n${item}`);
+      assert.match(err, /criterion C1: its check may change an external system and the script would run it/, check);
+    }
+    assert.ok(!existsSync(marker), 'nothing ran');
+    run.plan(`allow ${dry}\ncriterion C1 behavioral | Instances inspected | check: ${dry} | expect: changed\n${item}`);
+    run.dispatch();
+    run.record('inventory', 1, [block('C1', dry, 'changed')]);
+    assert.match(run.result('produce/inventory', 'DONE'), /✓ done {5}produce\/inventory/);
+    assert.equal(readFileSync(marker, 'utf8'), 'invoked ec2 terminate-instances --instance-ids i-test --dry-run\n');
+  });
+
+  it('withholds a detected secret from the patch validators read, and accepts nothing while a produced file holds it', (t) => {
+    const secret = 'review-fixture-token-123456';
+    const run = startRun(t, { env: { REVIEW_TEST_TOKEN: secret } });
+    run.plan('criterion C1 inspection | The report has its header\nitem produce findings | Write the report | owns: report.txt | criteria: C1\nitem produce greet-text | Leave greet alone | owns: bin/greet | criteria: C1');
+    const inspect = 'criterion: C1\nverdict: PASS\ntype: inspection\ncite: report.txt:1\ndecisive: safe header';
+    run.dispatch();
+    run.write('report.txt', `safe header\n${secret}\n`);
+    run.record('findings', 1, [inspect]);
+    run.record('greet-text', 1, [inspect]);
+    run.result('produce/findings', 'DONE');
+    const out = run.result('produce/greet-text', 'DONE');
+    assert.match(out, /✗ failed {3}batch 1 {15}produced files hold a detected secret \(value withheld\): report\.txt/);
+    assert.match(out, /✗ failed {3}produce\/findings .*an owned file holds a detected secret/);
+    assert.match(out, /✓ done {5}produce\/greet-text/, 'the item that does not own the file is not blamed');
+    const patch = join(run.task, 'evidence/integrated-post-1.patch');
+    assert.doesNotMatch(readFileSync(patch, 'utf8'), new RegExp(secret));
+    assert.match(readFileSync(patch, 'utf8'), /\+\[withheld:REVIEW_TEST_TOKEN\]/);
+    assert.match(run.status(), /^acceptance: incomplete \(produced files hold a detected secret: report\.txt\)$/m);
+    assert.match(run.report(), /^Secrets: PRODUCED FILES HOLD A DETECTED SECRET \(report\.txt\): not accepted until the value is removed\. a detected value was withheld from integrated-post-1\.patch/m);
+    assert.equal(readFileSync(join(run.workspace, 'report.txt'), 'utf8'), `safe header\n${secret}\n`, 'the script deletes nothing');
+    run.dispatch();
+    assert.match(run.brief('produce/findings', 2), /^Correction: Take 1 ended FAIL: owned file holds a secret: read it from the environment\./m);
+    run.write('report.txt', 'safe header\n');
+    run.record('findings', 2, [inspect]);
+    run.result('produce/findings', 'DONE');
+    run.dispatch();
+    run.record('checks', 1, [inspect]);
+    run.result('verify/checks', 'PASS');
+    const report = run.report();
+    assert.match(report, /state: complete$/m);
+    assert.match(report, /^Secrets: a detected value was withheld from integrated-post-1\.patch before validators read it\. none detected/m);
   });
 });

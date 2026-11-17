@@ -32,15 +32,15 @@ Decomposing a failed item is tried once before any model change. Run `LEDGER dis
 Run `LEDGER gate TASK produce/<slug>`. It writes `TASK/evidence/<slug>/escalation.md` and moves the item to the expensive model only when all six hold:
 
 1. The cheap model's top effort was tried and the minimum number of cheap takes was used (4 on Claude Code, 5 on Codex).
-2. Every retry carried its own correction citing the prior record, and none merely repeated the previous instruction.
+2. The latest retry carried its own correction citing the prior record. `dispatch --correction` refuses a repeat of the last one before it costs a take; an earlier repeat stays recorded, and one retry with a new correction meets the condition.
 3. The failure is classified `capability` by a separate, finished map item that ran after the failing take, or by a validator; the failing worker's own word or file does not count. Omission, environment, a flaky or vacuous check, ambiguity and scope conflicts never escalate the model.
 4. The failure is confirmed independently: a check of this item that the script re-ran and saw fail (non-zero exit, or a plan check or expected text that did not hold), or a validator FAIL with reproduced evidence. A worker's claim, a check that could not start, and a failing command that is not one of the item's checks are not enough.
 5. Narrowing was tried once and failed, or is recorded as impossible.
 6. The budget still admits the expensive call and the validation after it.
 
-It prints all six conditions, and for each one that failed the command to run next. For conditions 3 and 4, plan and dispatch the `map` item it prints (named `why-<slug>`); that worker's report ends with `class: …`, `reproduced: yes|no` and `command: …`. Then run `LEDGER classify TASK produce/<slug> <class> --by map/why-<slug>`: the script reads the class from that item's report, not from you, and counts the failure as reproduced only if the command is a plan check or a recorded check of the failing item and fails when the script re-runs it. If the class is not `capability`, fix the cause (correct the brief, repair the environment, replace the check, ask the user, extend ownership) or stop the item.
+It prints all six conditions, and for each one that failed the command to run next. For conditions 3 and 4, plan and dispatch the `map` item it prints (named `why-<slug>`); that worker's report ends with `class: …`, `reproduced: yes|no` and `command: …`. Then run `LEDGER classify TASK produce/<slug> <class> --by map/why-<slug>`: the script reads the class from that item's report, not from you, and counts the failure as reproduced only if the command is a plan check or a recorded check of the failing item and fails when the script re-runs it. If the class is not `capability`, fix the cause (brief, environment, check, the user's answer, ownership) or stop the item.
 
-The expensive take is a fresh worker with its own brief: it starts from the task, is not held to the narrowed scope, and reads the earlier records only to learn what failed. The item is entitled to that take once: however it ends, nothing dispatches a second one. One item's escalation changes no other item.
+The expensive take is a fresh worker: it starts from the task, not the narrowed scope, and reads earlier records only to learn what failed. The item is entitled to that take once: however it ends, nothing dispatches a second one.
 
 ## Out-of-scope files (`scope`)
 
@@ -48,10 +48,10 @@ At every batch close the script compares the workspace with the batch's owned ou
 
 ## Files changed outside any dispatch (`drift`)
 
-Before every batch the script compares the workspace with what the last batch left. If something changed in between (the user edited a file, you committed, a late worker wrote), it dispatches nothing and prints the paths. It never reverts them and neither do you. If the change is expected, run `LEDGER drift TASK accept "<who changed it and why>"`: the change becomes part of the work, anything validated before is validated again on the new state, and the report names it. If you do not know where it came from, ask the user. A file written by a check the script re-ran blocks in the same way, and the record that wrote it is rejected: fix the check, or release the path with a plan line `scratch <glob>`.
+If the workspace changed between batches (the user edited a file, you committed, a late worker wrote), the script dispatches nothing and prints the paths; nobody reverts them. If the change is expected, run `LEDGER drift TASK accept "<who changed it and why>"`: it becomes part of the work and is validated again. If you do not know where it came from, ask the user. A file written by a check the script re-ran blocks in the same way, and the record that wrote it is rejected: fix the check, or release the path with a plan line `scratch <glob>`.
 
-Changing a criterion's text, type, `check:` or `expect:` in a later plan is new work: every item that owns it starts again at level 1 on the cheap model, and its earlier takes, diagnosis and escalation record stop counting.
+A criterion added after validation reopens it; the run cannot complete until the criterion is verified, which needs an item that covers it. Changing a criterion's text, type, `check:` or `expect:` in a later plan is new work: every item that owns it starts again at level 1 on the cheap model, and its earlier takes, diagnosis and escalation record stop counting.
 
 ## Stopping
 
-`LEDGER stop TASK <stage/slug> "<reason>"` ends an item unresolved. The run continues for the others, and the report lists it. A run with clearly stuck items ends early by design; a large budget is not a reason to keep trying.
+`LEDGER stop TASK <stage/slug> "<reason>"` ends an item unresolved. The run continues for the others, and the report lists it. Stuck items end a run early by design; budget left is no reason to keep trying.

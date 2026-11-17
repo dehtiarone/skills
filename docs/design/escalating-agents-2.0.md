@@ -44,7 +44,7 @@ Evidence for (b):
 
 - **Claude pair, coding.** On FrontierCode 2.0, Haiku `high` (.1927, $0.139) scores above Sonnet `low` (.0966, $0.369) and `medium` (.1496, $0.482); only Sonnet `high` (.2295, $1.066) is above it. Artificial Analysis' re-run of the same tasks agrees (.232 vs .071, .110, .257), and its index puts Sonnet `low` (25.6) below Haiku `high` (29.9), `medium` (30.8) just above it and `high` (41.5) clearly above. Artificial Analysis labels its Sonnet 5.5 entries "Default Fallback"; whether a fallback model answered in those runs is not published, so they are weaker evidence than the FrontierCode rows.
 - **Codex pair.** Terra is absent from FrontierCode. On Artificial Analysis, Terra `low` (29.4) already beats Luna `high` (21.4), and Terra `high` reaches 42.4 at $0.259 per index task, 3.5 times Luna `high`.
-- **Cascade research.** Escalation pays when an executed check decides it (Dekoninck et al., theory; FrugalGPT); errors are correlated across models, so expect partial rescue. The one study of effort ladders (simulated, Together AI) jumps from lowest to highest. Two further rules are design choices without eligible measurements: stopping repeated repair early (the Debugging Decay Index measured this on HumanEval, an OpenAI dataset, so it is excluded) and starting the stronger model fresh from the task (SWE-Router measured this on SWE-bench Verified, excluded).
+- **Cascade research.** Escalation pays when an executed check decides it (Dekoninck et al., theory; FrugalGPT); errors are correlated across models, so expect partial rescue. The one study of effort ladders (Together AI: measured per-effort runs, ladders simulated over them) jumps from lowest to highest. Two further rules are design choices without eligible measurements: stopping repeated repair early (the Debugging Decay Index measured this on HumanEval, an OpenAI dataset, so it is excluded) and starting the stronger model fresh from the task (SWE-Router measured this on SWE-bench Verified, excluded).
 
 So after an item has used at least four cheap takes and passed the gate, the take with the highest independent expected gain is the expensive model at `high`, on both hosts. Restarting at `low` (option (a)) would on Claude spend two calls that are dearer and no stronger than the take that just failed.
 
@@ -147,10 +147,10 @@ Loading plan: SKILL.md always. Tier A or B code task: nothing else. `kind-infra.
 
 | Measure | 1.2.0 | 2.0.0 |
 | ------- | ----- | ----- |
-| Largest SKILL.md | 33,928 B (about 8,500 tokens), 337 lines | 13,276 B Codex, 13,115 B Claude (about 3,300 tokens; 39.1 % and 38.7 % of before), 110 and 113 lines |
-| Loaded for a tier B code run | 33,468 B | 13,115 B |
-| Loaded for a tier D code run, no failures | 33,468 B | 17,177 B (SKILL.md, `tiers.md`, `kind-code.md`) |
-| Loaded for a tier D run with a gate | 33,468 B | 24,602 B (adds `triage.md`) |
+| Largest SKILL.md | 33,928 B (about 8,500 tokens), 337 lines | 13,513 B Codex, 13,392 B Claude (about 3,400 tokens; 39.8 % and 39.5 % of before), 110 and 113 lines |
+| Loaded for a tier B code run | 33,468 B | 13,392 B |
+| Loaded for a tier D code run, no failures | 33,468 B | 17,454 B (SKILL.md, `tiers.md`, `kind-code.md`) |
+| Loaded for a tier D run with a gate | 33,468 B | 24,848 B (adds `triage.md`) |
 | Coordinator text per brief | 15 required fields; about 1,500–2,500 B (estimate, no trace kept) | two lines, 316 B in the live run, plus one plan line per item |
 
 Byte counts are measured static document loads, not peak coordinator context (replies, plan lines, script output and the report add to it); token counts assume four bytes per token. Claude Code re-attaches an invoked skill after compaction up to 5,000 tokens, so the whole SKILL.md survives.
@@ -192,7 +192,7 @@ One conflict: OpenAI's guidance says to avoid tests that "merely match generated
 
 ## 12. Open risks
 
-1. **The ledger script is large** (about 1,850 lines of Bash 3.2). It is covered by scenario tests, but a bug in it is a bug in every run. Its verdict lines are the interface; the coordinator has no fallback if it fails, other than reporting the failure.
+1. **The ledger script is large** (about 2,000 lines of Bash 3.2). It is covered by scenario tests, but a bug in it is a bug in every run. Its verdict lines are the interface; the coordinator has no fallback if it fails, other than reporting the failure.
 2. **Re-running recorded commands** executes strings written by a cheap worker, in the coordinator's environment and with its credentials. The script refuses, before execution, commands that look like they change an external system, and in infra runs any cloud or database CLI command the plan did not fix; it logs every command it runs. That is a screen, not a sandbox: a changing command it does not recognise still runs. The real protection for cloud work is a read-only identity, which the skill recommends and cannot enforce.
 3. **The `low` start on Codex** may cost time without saving money on hard items (section 3.2).
 4. **The expensive rung** (one take at `high`, on both hosts, for every kind of task), Terra's place in it and the Codex factors rest on aggregate leaderboard order, not on measured rescue rates after a cheap failure, and Zapier's tool-use rows order Sonnet's efforts the other way. They are initial choices to evaluate.
@@ -248,3 +248,22 @@ A second external review reproduced further failures on commit `7b2cad1`. Each h
 | Budget rationale cited failure rates the file does not show; weighted scores used as pass rates | Corrected in sections 3.2 and 5 |
 
 Still not done: checks run in the live workspace with the coordinator's permissions, not in a disposable copy with controlled network access, so the command screen remains a heuristic. Worker identity is still bound when a result is recorded, not when the worker starts. A declared limit is still a worker count, not a per-service request rate. No live, eval, compaction, weak-coordinator or Codex run has been made; the review's proposed release gate (tier B, tier D, a real gate, cloud and data fixtures, interruption, a serial baseline under Haiku and Luna parents) is the right next step and needs an authenticated CLI.
+
+## 16. Changes after the third external review
+
+A third external review of commit `ff6e821` reproduced five acceptance, authorisation and secret failures and one gate-recovery failure. Each has a regression test under "fourth review regressions" (or the rewritten gate and reconcile tests) in `test/ledger.test.mjs`.
+
+| Finding | Change |
+|---|---|
+| A `command-output` record with an invented saved file passed a criterion whose plan check printed something else | A plan `check:` is run by the script and decides alone whatever the evidence type. Without one, `command-output` and `source` passes are reported with basis `saved` and the run ends `PROVISIONAL`, not `complete`. A validator's saved evidence must lie in its own evidence directory, not the producer's. `inspection` passes are listed as inspection only |
+| `check: echo GOOD` in the plan bypassed the fixed-text screen | The screen applies to plan checks when the plan is applied; such a plan is refused. The report says plan checks are trusted as written: relevance is not proven |
+| A criterion added after validation left the run complete | Adding a criterion reopens validation and resets accepted items to produced; the validated state records a checksum of the whole criterion set; acceptance requires a verified PASS for every current criterion, owned or not; the plan names uncovered criteria |
+| An `allow` line for `… --dry-run` authorised the same command without the flag | Authorisation matches the whole command exactly, never a substring |
+| A detected secret stayed in the integrated patch validators read, and the run still completed | The patch is screened at batch close and the stored copy has the value withheld. Items owning a file whose added lines hold it fail their take; acceptance is blocked while it is there; the workspace file is never deleted |
+| After two identical corrections, gate condition 2 could never pass, yet the gate recommended a retry | `dispatch --correction` refuses a repeat of the last correction before spending a take. Condition 2 is decided by the latest retry, with earlier repeats counted in the record; with no take left, the gate says to stop |
+| Resume trusted a report footer as proof the worker had stopped | `bind` records the host's worker id right after spawn. `reconcile` closes a take only for workers the coordinator names `--stopped` after checking the host; it lists the rest with their ids and keeps the batch open. Lost workers are recorded only when named |
+| The source index used a citation study mixing BrowseComp queries | Figures excluded; the idea is kept as design input only |
+| `limit N` read as a rate | Documented as a concurrency cap; request pacing stays with collectors' briefs |
+| Codex-only "delegate only through these dispatches" | Now a shared rule (4) on both hosts |
+
+Not changed: the expensive rung stays on by default. The review is right that aggregate rankings do not establish conditional rescue rates, so the default is not shown to be the cheapest policy; the maintainer chose to keep it, gated, after this was raised (section 14). The command screen remains a heuristic, a plan check's relevance is still the planner's judgment, and no live, eval, compaction, weak-coordinator or Codex run has been made. The release gate the reviews propose still needs an authenticated CLI.

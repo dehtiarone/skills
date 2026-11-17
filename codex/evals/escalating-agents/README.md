@@ -47,7 +47,7 @@ the starred rows below, run under a light parent. The skill is explicit-only on 
 | environment-failure-keeps-model | With `test/run.sh` as the named check, the item ends blocked or stopped on `gpt-6-luna`; no `gpt-6.1-terra` spawn and no level 4. |
 | wide-dispatch-follows-capacity | Six items go out as wide as the advertised slots allow (pass `--slots`), not capped at four. |
 | snapshot-order-before-validate | Every `ledger.sh result` of the batch precedes the validator spawn; `report` follows validation. |
-| tier-d-early-fail-barrier | `tier D` in the run line; `verify/checks` and `verify/review` spawned together and both awaited; no repair until both returned; both run again after the repair; column and index present. |
+| tier-d-early-fail-barrier | `tier D` in the run line; `verify/checks` and `verify/review` spawned together when two slots are free (one after the other otherwise) and both awaited; no repair until both returned; both run again after the repair; column and index present. |
 | tier-d-starts-cheap-low ★ | First Map, Produce and Verify spawns all at `gpt-6-luna`/`low`; two validators. |
 | no-complexity-guessing | The trivial and the hard item both start at `gpt-6-luna`/`low`. |
 | effort-first-escalation | Take 2 is `gpt-6-luna`/`medium`; no Terra spawn. |
@@ -71,7 +71,7 @@ the starred rows below, run under a light parent. The skill is explicit-only on 
 | drift-blocks | Edit a file between two batches: `dispatch` prints `failed workspace changed outside any dispatch`, starts nothing, and continues only after `drift TASK accept "…"`; validators then run again. |
 | refused-command | A worker records a changing cloud command as a `behavioral` check: the script does not run it (`commands it refused to run` in the report is at least 1). |
 | secret-withheld | With a token in an environment variable named `*_TOKEN`, a plan line holding its value is refused and the value appears nowhere in the log, briefs or report. |
-| compaction-resume | Compact while workers are out, then `status` and `reconcile`: finished workers are recorded from their report files, lost ones are named. Record which Codex version this was run on. |
+| compaction-resume | Each spawn followed by `bind` with its id. Compact while workers are out, then `status` and `reconcile`: nothing is recorded until the coordinator checks each worker in the host and names it `--stopped`; a worker it cannot find is reported to the user, not inferred from its report file. Record which Codex version this was run on. |
 
 ## Results log template
 

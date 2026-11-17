@@ -23,10 +23,10 @@ This skill runs only when the user invokes it by name. You are the coordinator: 
 1. **Every first attempt is the cheap model at `low` effort**, in every tier and stage, validators included. The script prints the model and effort of each dispatch; use exactly those. Never choose a model or effort, and never estimate how hard an item is: results move an item up, predictions do not.
 2. **Subagent effort is `low`, `medium` or `high`**, never above or below.
 3. **The expensive model is used only after `LEDGER gate` prints a `model` line for that item.** Never for a first attempt, never for a validator or map item, never because an item looks hard.
-4. **You delegate reading as well as writing.** Do not open source files, data, logs, worker transcripts, full patches or brief templates. Read only script output, worker replies (10 lines at most) and the report section a `next:` line points you to. To learn something about the workspace, plan a `map` item.
+4. **You delegate only through the script's dispatches, reading as well as writing.** Do not open source files, data, logs, worker transcripts, full patches or brief templates. Read only script output, worker replies (10 lines at most) and the report section a `next:` line points you to. To learn something about the workspace, plan a `map` item.
 5. **Workers never** commit, push, deploy, delegate, or run the scripts. Outside the workspace everything is read-only unless the user authorised that exact action (`allow` plan line). Credentials, tokens and secrets never appear in a brief, a reply, evidence or the report.
 6. Never reset, stash, clean or revert work you did not dispatch. In Plan mode dispatch nothing that writes.
-7. **State lives in `TASK`, not in your memory.** After a compaction, an interruption or any doubt, run `LEDGER status TASK` and continue from its `next:` line; if workers were out and you no longer hold them, it tells you to run `LEDGER reconcile TASK`.
+7. **State lives in `TASK`, not in your memory.** After a compaction, an interruption or any doubt, run `LEDGER status TASK` and continue from its `next:` line; if workers were out and you no longer hold them, run `LEDGER reconcile TASK`; it closes a take only for a worker you name `--stopped` once the host shows it ended.
 
 ## Run loop
 
@@ -46,12 +46,12 @@ This skill runs only when the user invokes it by name. You are the coordinator: 
    ```
    - In tier C or D, or whenever you would have to read files to plan, plan only `map` items first. Their replies and the `## Plan lines` section of their reports give you the produce items.
    - **Sizing rule:** one behaviour per item; one criterion per item, two at most; owned outputs disjoint from every other item; small enough for one sitting (about five files, one data source, or one account and region). Prefer more, smaller items; merge only when `dispatch` says an item is not admitted.
-   - Give a criterion its `check:` whenever the request or a map report names a command. Without one it passes only on a check a worker chose, and the report then says `PROVISIONAL`, not `complete`. Never write a secret's value into a plan line; name its variable.
+   - Give a criterion its `check:` whenever the request or a map report names a command. Without one it passes only on a check a worker chose or evidence a worker saved, and the report says `PROVISIONAL`, not `complete`. Never write a secret's value into a plan line; name its variable.
    - Items that share a database, port, cache or generated file get the same `locks: <name>`; they then never run side by side.
    - A slug is 20 characters at most and names the purpose (`fix-parser`, not `item-3`). Validators are added for you.
 3. **Loop until a `next:` line says `report`:**
    1. `LEDGER dispatch TASK`. It admits the widest safe batch, snapshots the workspace, writes the briefs and prints one `dispatch` block per worker.
-   2. Start every printed worker in one message, as "Dispatch" below says.
+   2. Start every printed worker in one message, as "Dispatch" below says, and record each id the host returns: `LEDGER bind TASK <stage/slug> <id>`.
    3. For each reply: `LEDGER result TASK <stage/slug> <outcome> [--class <class>] [--sig "<signature>"] [--worker <its id>]`, copying `outcome`, `class` and `signature` from the reply. A missing or malformed reply is `UNUSABLE`. The script re-runs the recorded checks itself; a worker's word is never the evidence.
    4. Do what each `next:` line says, with the command it prints: `dispatch`; `narrow` (restate the one failing criterion with decisions pre-made); `gate`; a blocked item (ask the user, then `answer`); out-of-scope files (`scope`); files changed outside any dispatch (`drift`); a pinning mismatch (ask the user). If a line needs a fact you do not have, plan a `map` item to get it. `references/triage.md` explains each case; read it the first time one appears.
 4. **Report.** `LEDGER report TASK [--external "<external actions actually taken>"] [--usage "<measured tokens or cost>"]`, then relay what it prints as your final message.
@@ -93,7 +93,7 @@ For each `dispatch` block make one `Agent` call with `subagent_type: "general-pu
 
 ## Evidence
 
-Each criterion has an ID and one evidence type; a record must use that same type, and weaker evidence never satisfies a stronger criterion. A PASS means the command exits 0 and is more than fixed text; a plan `check:` is judged only by its own run; a required check that was not run is never a pass. The script refuses commands it recognises as changing an external system and, in an infra run, every command the plan did not fix: a screen, not a sandbox. Re-run by the script: `behavioral`, `static`, `parse`, `format`, `schema`, `reconciliation`, `recompute`. Saved output or copy checked by the script: `command-output`, `source`. Cited location checked by the script: `inspection`. Choose the strongest type the work allows; `references/evidence.md` lists which fits which kind of task.
+Each criterion has an ID and one evidence type; a record must use that same type, and weaker evidence never satisfies a stronger criterion. A PASS means the command exits 0 and is more than fixed text; a plan `check:` is judged only by its own run; a required check that was not run is never a pass. The script refuses commands it recognises as changing an external system and, in an infra run, every command the plan did not fix; an `allow` line covers only that exact command. A screen, not a sandbox. Re-run by the script: `behavioral`, `static`, `parse`, `format`, `schema`, `reconciliation`, `recompute`. Saved output or copy, provisional unless the plan fixes a `check:`: `command-output`, `source`. Cited location checked by the script: `inspection`. Choose the strongest type the work allows; `references/evidence.md` lists which fits which kind of task.
 
 ## Progress log
 

@@ -61,7 +61,8 @@ usage() {
     '       ledger.sh plan TASK                       (plan lines on stdin)' \
     '       ledger.sh dispatch TASK [STAGE/SLUG ...] [--slots N] [--correction TEXT] [--narrow TEXT]' \
     '       ledger.sh result TASK STAGE/SLUG OUTCOME [--class C] [--sig TEXT] [--ran MODEL/EFFORT] [--worker ID] [--no-progress]' \
-    '       ledger.sh reconcile TASK                  (after a compaction: record finished workers from their report files)' \
+    '       ledger.sh bind TASK STAGE/SLUG WORKER_ID  (right after each spawn: the id the host returned)' \
+    '       ledger.sh reconcile TASK [--stopped STAGE/SLUG ...]   (after a compaction; --stopped: the host shows these workers ended)' \
     '       ledger.sh gate TASK produce/SLUG [--narrowing-impossible TEXT]' \
     '       ledger.sh classify TASK produce/SLUG CLASS --by map/SLUG' \
     '       ledger.sh drift TASK accept TEXT' \
@@ -236,7 +237,45 @@ criterion_changed() { # criterion, plan line number
     printf 'note: criterion %s changed: %s starts again at level 1 (%s/low); its earlier takes, diagnosis and gate record no longer count\n' "$1" "$(iname "$id")" "$N_CHEAP"
     event replanned "$(iname "$id")" "criterion $1 changed"
   done
-  if [[ "$any" == 1 || -n "$(rget frozen_name '')" ]]; then reset_validators; fi
+  if [[ "$any" == 1 || -n "$(rget frozen_name '')" ]]; then reopen_validation "$1" "$2"; fi
+}
+# What was validated was validated against the criteria as they were. A criterion added or changed
+# afterwards means every validator owes a new verdict; finished work waits for it again.
+reopen_validation() { # criterion, plan line number
+  local id
+  for id in $(items); do
+    [[ "$(istage "$id")" == verify && "$(iget "$id" status)" == running ]] && die "line $2: the validators are running; record their results before changing criterion $1"
+  done
+  for id in $(items); do
+    [[ "$(istage "$id")" == produce && "$(iget "$id" status)" == accepted ]] && iput "$id" status done
+  done
+  reset_validators
+  rput failed_frozen ''; rput unowned_fail ''
+  : > "$TASK/verified"
+}
+criterion_added() { # criterion, plan line number
+  reopen_validation "$1" "$2"
+  printf 'note: criterion %s was added after work was validated: nothing counts as accepted until it is verified too\n' "$1"
+  event replanned - "criterion $1 added"
+}
+spec_sig() { # one number for the whole acceptance specification as it stands
+  local c
+  for c in $(all_criteria); do
+    printf '%s|%s|%s|%s|%s\n' "$c" "$(cat "$TASK/criteria/$c/type")" "$(cat "$TASK/criteria/$c/text")" "$(cat "$TASK/criteria/$c/check" 2>/dev/null || true)" "$(cat "$TASK/criteria/$c/expect" 2>/dev/null || true)"
+  done | cksum | tr -d ' '
+}
+set_validated() { rput validated "$1"; rput validated_spec "$(spec_sig)"; }
+unowned_criteria() { # criteria no produce item covers
+  local c id hit out=''
+  for c in $(all_criteria); do
+    [[ "$c" == R1 ]] && continue
+    hit=0
+    for id in $(items); do
+      [[ "$(istage "$id")" == produce ]] && in_list "$c" "$(printf '%s' "$(iget "$id" criteria '')" | tr ',' ' ')" && hit=1
+    done
+    [[ "$hit" == 1 ]] || out="$out $c"
+  done
+  printf '%s' "$(trim "$out")"
 }
 plan_apply() {
   local line n=0 kw rest check expect text owns crit after locks field key stage slug type cid first_items planned=0
@@ -257,7 +296,10 @@ plan_apply() {
         cid=${rest%% *}; type=$(trim "${rest#"$cid"}")
         [[ "$cid" =~ ^[A-Z][A-Z0-9]{0,7}$ ]] || die "line $n: criterion ID must look like C1: $cid"
         in_list "$type" "$TYPES_ALL" || die "line $n: unknown evidence type '$type' (one of: $TYPES_ALL)"
-        if [[ -d "$TASK/criteria/$cid" ]] && [[ "$type" != "$(cat "$TASK/criteria/$cid/type")" || "$text" != "$(cat "$TASK/criteria/$cid/text")" || "$check" != "$(cat "$TASK/criteria/$cid/check" 2>/dev/null || true)" || "$expect" != "$(cat "$TASK/criteria/$cid/expect" 2>/dev/null || true)" ]]; then
+        [[ -z "$check" ]] || ! constant_command "$check" || die "line $n: the check of criterion $cid only prints fixed text or returns a fixed status, so it cannot fail when the work is wrong. Name a command that exercises the criterion"
+        if [[ ! -d "$TASK/criteria/$cid" ]]; then
+          [[ -z "$(rget frozen_name '')" && ! -s "$TASK/verified" ]] || criterion_added "$cid" "$n"
+        elif [[ "$type" != "$(cat "$TASK/criteria/$cid/type")" || "$text" != "$(cat "$TASK/criteria/$cid/text")" || "$check" != "$(cat "$TASK/criteria/$cid/check" 2>/dev/null || true)" || "$expect" != "$(cat "$TASK/criteria/$cid/expect" 2>/dev/null || true)" ]]; then
           criterion_changed "$cid" "$n"
         fi
         mkdir -p "$TASK/criteria/$cid"
@@ -329,6 +371,10 @@ plan_apply() {
     done
   fi
   ensure_verify_items
+  if [[ -n "$first_items" ]]; then refresh_verify_criteria; fi
+  if [[ -n "$(unowned_criteria)" && -n "$(items)" ]]; then
+    printf 'note: no produce item covers criterion %s: the run cannot complete until one does and it is verified (item produce <slug> | <task> | owns: <globs> | criteria: <ID>)\n' "$(unowned_criteria)"
+  fi
   if [[ -z "$(rget run_line '')" && -n "$(items)" ]]; then
     local count=0 id pin=''
     for id in $(items); do [[ "$(istage "$id")" == verify ]] || count=$((count + 1)); done
@@ -544,6 +590,8 @@ cmd_dispatch() {
     # A corrected take at the cheap model's top effort is how gate condition 1 gets met.
     set -- $explicit
     [[ $# == 1 ]] || die '--correction applies to exactly one item'
+    local lastcorr; lastcorr=$(iget "$1" "corr.$(iget "$1" takes 0)" '')
+    [[ "$correction" != "$lastcorr" ]] || die "this repeats the correction given for take $(iget "$1" takes) of $(iname "$1"). Nothing was dispatched and no take was spent: say what to do differently this time"
     [[ "$(iget "$1" status)" != need-gate ]] || iput "$1" status retry
   fi
   # Candidates: explicit items, or every dispatchable map/produce item; validators only once production is frozen.
@@ -697,7 +745,7 @@ cmd_dispatch() {
     if [[ "$(iget "$id" continue 0)" == 1 && -n "$(iget "$id" worker '')" ]]; then printf 'note: %s continues in worker %s; if that worker is gone, start a new one with the same two lines\n' "$(iname "$id")" "$(iget "$id" worker)"; fi
     iput "$id" continue 0
   done
-  printf 'next: start every worker above at once, each with exactly the printed model and %s and the two indented lines as its whole instruction; barrier=yes means nothing else starts until all of them have returned; then record each return with ledger.sh result\n' "$(effort_name)"
+  printf 'next: start every worker above at once, each with exactly the printed model and %s and the two indented lines as its whole instruction; as each one starts, record the id the host gave it: ledger.sh bind TASK STAGE/SLUG <worker id>; barrier=yes means nothing else starts until all of them have returned; then record each return with ledger.sh result\n' "$(effort_name)"
 }
 cmd_defer() { # the host refused these spawns for capacity: undo the dispatch and learn the width
   load_task "${1:-}"; shift
@@ -769,7 +817,9 @@ check_writes() {
 }
 outsig() { printf '#%s' "$(cksum < "$1" | cut -d' ' -f1 | tail -c 5)"; }
 strip_ticks() { local v=$1; if [[ "$v" == '`'*'`' && ${#v} -ge 2 ]]; then v=${v#\`}; v=${v%\`}; fi; printf '%s' "$v"; }
-allowed_external() { [[ -f "$TASK/allowed-external.md" ]] && grep -qF -- "$1" "$TASK/allowed-external.md"; }
+# An authorisation covers the command exactly as the user's `allow` line wrote it: a command that
+# only resembles it (a flag dropped, another account or resource) is a different action.
+allowed_external() { [[ -f "$TASK/allowed-external.md" ]] && grep -qxF -- "- $(trim "$1")" "$TASK/allowed-external.md"; }
 # The script is about to execute a command a worker wrote. GUARD names why it must not run, if so.
 # This is a screen, not a sandbox: it refuses what it recognises and cannot prove a command harmless.
 guard_command() { # command, the plan check it must equal to be trusted (or ''), who recorded it
@@ -822,10 +872,12 @@ judge_block() {
     if [[ -z "$res" && "$B_type" != "$required" ]]; then res=unsupported; detail="evidence type $B_type does not satisfy a $required criterion"; fi
     if [[ -z "$res" && -z "$B_decisive" ]]; then res=unsupported; detail='no decisive output line quoted'; fi
     if [[ -z "$res" ]]; then
-      if in_list "$B_type" "$TYPES_RUN"; then
-        named=$(cat "$TASK/criteria/$B_criterion/check" 2>/dev/null || true); expect=$(cat "$TASK/criteria/$B_criterion/expect" 2>/dev/null || true)
-        [[ "$B_timeout" =~ ^[0-9]+$ && "$B_timeout" -le 1800 && "$B_timeout" -ge 1 ]] || B_timeout=300
-        if [[ -n "$named" && ( "$B_verdict" == PASS || "$B_command" == "$named" ) ]]; then
+      named=$(cat "$TASK/criteria/$B_criterion/check" 2>/dev/null || true); expect=$(cat "$TASK/criteria/$B_criterion/expect" 2>/dev/null || true)
+      [[ "$B_timeout" =~ ^[0-9]+$ && "$B_timeout" -le 1800 && "$B_timeout" -ge 1 ]] || B_timeout=300
+      if [[ -n "$named" && ( "$B_verdict" == PASS || "$B_command" == "$named" ) ]]; then
+        # Whatever the evidence type, a check the plan fixed is run by the script and decides alone.
+        # A saved file, a quoted line or another command cannot stand in for it.
+        if true; then
           # The plan fixed the check: only its own run decides. Whatever else the worker ran or
           # printed counts for nothing, and the expected text must be in this output.
           basis=plan
@@ -842,7 +894,9 @@ judge_block() {
             elif [[ -n "$expect" ]] && ! grep -qF -- "$expect" "$out"; then res=unsupported; detail="output lacks the expected text $(outsig "$out")"; ACC_RERUN=1
             else res=pass; detail="$(clean "$named" 50) exit 0"; fi
           fi
-        else
+        fi
+      elif in_list "$B_type" "$TYPES_RUN"; then
+        if true; then
           # No plan check (or a FAIL found with another command): the worker chose the command. The
           # script re-runs it, but a pass on it is reported as provisional.
           basis=worker
@@ -871,9 +925,14 @@ judge_block() {
           fi
         fi
       else
+        # The script cannot collect this evidence again: it only confirms that the quoted text is in
+        # the file. That is reported as such (basis saved or inspection), never as an independent check.
         file=$B_saved
-        if [[ "$B_type" == inspection ]]; then file=${B_cite%%:*}; case "$file" in /*) : ;; *) file="$WORKSPACE/$file" ;; esac; fi
+        if [[ "$B_type" == inspection ]]; then basis=inspection; file=${B_cite%%:*}; case "$file" in /*) : ;; *) file="$WORKSPACE/$file" ;; esac; fi
         if [[ -z "$file" || ! -s "$file" ]]; then res=unsupported; detail='cited or saved file is missing or empty'
+        elif [[ "$B_type" != inspection && "$(istage "$id")" == verify && "$file" != "$ev"/* ]]; then
+          res=unsupported; detail="a validator collects its own evidence: save it under $(clean "$ev" 60)/, not a file the producer wrote"
+        elif [[ -n "$expect" ]] && ! grep -qF -- "$expect" "$file"; then res=unsupported; detail='the saved evidence lacks the text the plan expects'
         elif ! grep -qF -- "$B_decisive" "$file"; then res=unsupported; detail='quoted decisive line is not in the cited file'
         elif [[ "$B_type" == source && ( -z "$B_cite" || -z "$B_retrieved" ) ]]; then res=unsupported; detail='source needs cite and retrieved'
         elif [[ "$B_type" == command-output && -z "$B_command" ]]; then res=unsupported; detail='command-output needs the command'
@@ -1081,6 +1140,45 @@ record_take() { # id outcome class failure
   printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$(iget "$1" takes)" "$(iget "$1" level)" "$ME_MODEL/$ME_EFFORT" "$(iget "$1" ret_ran unavailable)" \
     "$(iget "$1" batch)" "$(iget "$1" ret_dur 0)" "$2" "${3:--}" "$(clean "${4:--}" 60)" "$ME_UNITS" >> "$TASK/items/$1/history"
 }
+# The integrated patch is handed to validators, so it is screened first. A detected value is withheld
+# from the stored copy. If lines the run added hold it, the files are named in run/secret_paths: their
+# owners must remove it, and nothing is accepted while it is there. Nothing in the workspace is deleted.
+screen_patch() { # patch file
+  local f=$1 hits name n path paths=''
+  rput secret_paths ''
+  [[ -s "$f" ]] && file_has_secret "$f" || return 0
+  hits=$(mktemp "$TASK/check.XXXXXX")
+  { for name in $SECRET_NAMES; do grep -nF -- "${!name}" "$f" || true; done; grep -nE -- "$SECRET_RE" "$f" || true; } |
+    sed -n 's/^\([0-9]*\):+.*/\1/p' | sort -un > "$hits"
+  while IFS= read -r n; do
+    path=$(sed -n "1,${n}p" "$f" | grep '^+++ ' | tail -n 1 | sed -e 's/^+++ //' -e 's/^b\///' -e 's/[[:space:]]*$//')
+    [[ -n "$path" && "$path" != /dev/null ]] || continue
+    case "
+$paths" in *"
+$path
+"*) : ;; *) paths="$paths$path
+" ;; esac
+  done < "$hits"
+  rm -f "$hits"
+  redact < "$f" > "$f.screened" && mv "$f.screened" "$f"
+  printf '%s\n' "${f##*/}" >> "$TASK/secret-events"
+  [[ -n "$paths" ]] || return 0
+  rput secret_paths "$(printf '%s' "$paths" | tr '\n' ' ' | sed 's/ $//')"
+  printf '%s' "$paths" > "$TASK/run/secret_path_lines"
+  say fail failed "$(printf '%-22s%s' "batch $(rget batch)" "produced files hold a detected secret (value withheld): $(clean "$(rget secret_paths)" 100)")"
+  event secret "batch $(rget batch)" "$(rget secret_paths)"
+}
+owns_secret_path() { # id → 0 when one of the item's owned globs covers a file that holds a detected secret
+  local path glob
+  [[ -n "$(rget secret_paths '')" && -s "$TASK/run/secret_path_lines" ]] || return 1
+  while IFS= read -r path; do
+    for glob in $(printf '%s' "$(iget "$1" owns '')" | tr ',' ' '); do
+      # shellcheck disable=SC2053
+      [[ "$path" == $glob ]] && return 0
+    done
+  done < "$TASK/run/secret_path_lines"
+  return 1
+}
 close_batch() {
   local batch id globs='' out rc=0 stage paths pre
   batch=$(rget batch); pre=$(cat "$TASK/batches/$batch/pre")
@@ -1097,6 +1195,7 @@ close_batch() {
   out=$(snap checkpoint "$TASK/state" "$pre" "post-$batch" "$TASK/evidence/integrated-post-$batch.patch" $globs) || rc=$?
   set +f
   [[ "$rc" == 0 || "$rc" == 3 ]] || die "snapshot checkpoint failed: $out"
+  screen_patch "$TASK/evidence/integrated-post-$batch.patch"
   rput last_post "post-$batch"
   printf '%s\n' "$out" | sed -n '1p' > "$TASK/batches/$batch/checkpoint"
   if [[ "$rc" == 3 ]]; then
@@ -1124,7 +1223,11 @@ settle_batch() {
         if [[ "$outcome" == DONE ]]; then iput "$id" status done; ndone=$((ndone + 1))
         else advance "$id" "$outcome" "$(iget "$id" ret_class '')" "$(iget "$id" ret_sig '')"; fi ;;
       produce)
-        if [[ "$outcome" == DONE ]]; then
+        if [[ "$outcome" == DONE ]] && owns_secret_path "$id"; then
+          item_line fail failed "$id" "$(where "$id")$(iget "$id" ret_tail '')$(sep)an owned file holds a detected secret"
+          record_take "$id" 'FAIL(secret)' omission 'an owned file holds a detected secret'
+          advance "$id" FAIL omission 'owned file holds a secret: read it from the environment'
+        elif [[ "$outcome" == DONE ]]; then
           accept_record "$id"
           if [[ "$ACC_OK" == 1 && -z "$ACC_FAIL" && -z "$ACC_NOTRUN" ]]; then
             record_take "$id" DONE '' ''
@@ -1164,7 +1267,7 @@ settle_batch() {
       fi
     done
     if [[ "$nacc" -gt 0 ]]; then
-      rput validated "$(rget last_post)"
+      set_validated "$(rget last_post)"
       say ok passed "$(printf '%-22s%s' verify "script check$(sep)$ncrit/$ncrit criteria$(sep)units $(rget used)/$BUDGET")"
     fi
   fi
@@ -1289,7 +1392,7 @@ settle_verify() {
         iput "$id" status accepted
       done
       for id in $(items); do [[ "$(iget "$id" status)" == done ]] && iput "$id" status accepted; done
-      rput validated "$(rget last_post)"; rput failed_frozen ''; rput unowned_fail ''
+      set_validated "$(rget last_post)"; rput failed_frozen ''; rput unowned_fail ''
       say ok passed "$(printf '%-22s%s' verify "$nv/$nv validators$(sep)$crits/$crits criteria$(sep)units $(rget used)/$BUDGET")"
     elif [[ "$unsupported" == 0 ]]; then
       printf 'note: verification is not complete: no supported PASS on %s yet from%s\n' "$(rget frozen_name)" "$missing"
@@ -1353,10 +1456,13 @@ cmd_gate() {
   c2=PASS
   t=$((epoch + 2))
   prev=''
+  local repeats=0
   while [[ "$t" -le "$(iget "$id" takes)" ]]; do
-    # A retry that only repeats the previous instruction is the same approach again.
+    # A retry that only repeats the previous instruction is the same approach again. Earlier repeats
+    # stay in the record and are counted; the condition is decided by the latest retry, so one more
+    # take with a correction of its own can meet it.
     cur=$(iget "$id" "corr.$t" ''); cur=${cur#Take * ended }
-    if [[ -z "$cur" || "$cur" == "$prev" ]]; then c2=FAIL; fi
+    if [[ -z "$cur" || "$cur" == "$prev" ]]; then c2=FAIL; repeats=$((repeats + 1)); else c2=PASS; fi
     prev=$cur; t=$((t + 1))
   done
   # The producing worker's own word does not classify its failure: a separate finished map item or a validator must.
@@ -1369,7 +1475,7 @@ cmd_gate() {
     printf '# Escalation record: %s\n\n' "$(iname "$id")"
     printf 'Written by ledger.sh gate before any expensive-model dispatch. Result: %s/6.\n\n' "$pass"
     printf '1. %s — cheap model exhausted: %s cheap takes (minimum %s), %s at its top effort.\n' "$c1" "$cheap" "$N_GATE_MIN" "$attop"
-    printf '2. %s — every retry carried its own correction citing the prior record; none repeated the previous instruction.\n' "$c2"
+    printf '2. %s — the latest retry carried a correction of its own citing the prior record; %s earlier retr%s repeated the previous instruction (see the table).\n' "$c2" "$(if [[ "$c2" == FAIL ]]; then printf '%s' $((repeats - 1)); else printf '%s' "$repeats"; fi)" "$(if [[ "$c2" == FAIL && "$repeats" == 2 || "$c2" == PASS && "$repeats" == 1 ]]; then printf y; else printf ies; fi)"
     printf '3. %s — failure class: %s, classified by %s%s.\n' "$c3" "${class:-unclassified}" "$(if [[ "$source" == worker ]]; then printf 'the failing worker only (not accepted)'; else printf 'a %s' "$source"; fi)" "$(if [[ -n "$(iget "$id" classify_evidence '')" ]]; then printf ' (%s)' "$(iget "$id" classify_evidence)"; fi)"
     printf '4. %s — independent confirmation: %s.\n' "$c4" "$(confirmed_text "$(iget "$id" confirmed '')")"
     printf '5. %s — narrowing: %s.\n' "$c5" "$(narrowing_text "$id")"
@@ -1396,7 +1502,10 @@ cmd_gate() {
   local diag
   diag="plan a read-only map item and dispatch it: item map why-$(islug "$id" | cut -c1-16) | Why does $(iname "$id") fail? Read the records under $ev. End the report with the lines class:, reproduced: and command: (one of the item's own recorded checks)"
   [[ "$c1" == PASS ]] || printf 'next: condition 1 — dispatch another corrected take at the cheap model'"'"'s top effort: ledger.sh dispatch TASK %s --correction "<what to do differently>"\n' "$(iname "$id")"
-  [[ "$c2" == PASS ]] || printf 'next: condition 2 — a retry repeated the previous instruction: ledger.sh dispatch TASK %s --correction "<what to do differently>"\n' "$(iname "$id")"
+  if [[ "$c2" != PASS ]]; then
+    if [[ "$(iget "$id" takes)" -ge "$(take_limit "$id")" ]]; then printf 'next: condition 2 — the latest retry repeated the previous instruction and no take is left to correct it: ledger.sh stop TASK %s "repeated correction, take limit"\n' "$(iname "$id")"
+    else printf 'next: condition 2 — the latest retry repeated the previous instruction. One take with a different correction meets it: ledger.sh dispatch TASK %s --correction "<what to do differently>"\n' "$(iname "$id")"; fi
+  fi
   if [[ "$c3" != PASS ]]; then
     if [[ -z "$class" || "$class" == - || ( "$class" == capability && "$source" == worker ) ]]; then
       printf 'next: condition 3 — %s. Then: ledger.sh classify TASK %s <class> --by map/why-%s\n' "$diag" "$(iname "$id")" "$(islug "$id" | cut -c1-16)"
@@ -1486,6 +1595,7 @@ cmd_drift() { # files changed outside any dispatch: nothing is validated silentl
   # What was frozen or validated before is no longer what is on disk.
   if [[ -n "$(rget frozen_name '')" ]]; then
     snap checkpoint "$TASK/state" "$snapname" "$snapname" "$TASK/evidence/integrated-$snapname.patch" > /dev/null
+    screen_patch "$TASK/evidence/integrated-$snapname.patch"
     rput frozen "$snapname (tree $(cat "$TASK/state/trees/$snapname.tree"))"; rput frozen_name "$snapname"
     rput frozen_patch "$TASK/evidence/integrated-$snapname.patch"; rput failed_frozen ''
     for id in $(items); do
@@ -1498,13 +1608,38 @@ cmd_drift() { # files changed outside any dispatch: nothing is validated silentl
 }
 # After a compaction the coordinator may no longer hold its workers. Their report files end with the
 # reply block, so finished ones can be recorded from disk; the rest are named.
+cmd_bind() {
+  load_task "${1:-}"; shift
+  local id; id=$(iid "${1:-}")
+  [[ -n "${2:-}" ]] || usage
+  [[ "$(iget "$id" status)" == running ]] || die "$(iname "$id") is not running (status: $(iget "$id" status))"
+  iput "$id" worker "$(clean "$(scrub "$2")" 80)"; iput "$id" bound_take "$(iget "$id" takes)"
+  event bound "$(iname "$id")" "worker $(iget "$id" worker) take $(iget "$id" takes)"
+  printf 'bound %s take %s to worker %s\n' "$(iname "$id")" "$(iget "$id" takes)" "$(iget "$id" worker)"
+}
+# A report file shows that a worker wrote its last line, not that it stopped: it or a command it
+# started may still be writing. A take is closed from disk only for workers the coordinator names
+# as ended in the host (--stopped), and the run stays blocked on the others.
 cmd_reconcile() {
-  load_task "${1:-}"
-  local id f tail outcome class sig batch
+  load_task "${1:-}"; shift
+  local id f tail outcome class sig batch stopped='' who waiting=0
+  if [[ "${1:-}" == --stopped ]]; then shift; while [[ $# -gt 0 ]]; do stopped="$stopped $(iid "$1")"; shift; done; fi
+  [[ $# == 0 ]] || die 'write: ledger.sh reconcile TASK [--stopped STAGE/SLUG ...]'
   [[ -n "$(rget batch_open '')" ]] || die 'no batch is open: nothing to reconcile; run ledger.sh status TASK'
   batch=$(rget batch)
+  for id in $stopped; do
+    [[ "$(iget "$id" status)" == running ]] || die "$(iname "$id") is not running (status: $(iget "$id" status))"
+  done
   for id in $(cat "$TASK/batches/$batch/items"); do
     [[ "$(iget "$id" status)" == running ]] || continue
+    if ! in_list "$id" "$stopped"; then
+      waiting=$((waiting + 1))
+      if [[ -n "$(iget "$id" worker '')" && "$(iget "$id" bound_take '')" == "$(iget "$id" takes)" ]]; then who="worker $(iget "$id" worker)"; else who='a worker whose id was never recorded'; fi
+      printf 'note: %s take %s runs in %s; report file %s. Look it up in the host: if it has finished, or once you have stopped it there, name it: ledger.sh reconcile TASK --stopped %s\n' "$(iname "$id")" "$(iget "$id" takes)" "$who" \
+        "$(if [[ -s "$(evidence_dir "$id")/take-$(iget "$id" takes).report.md" ]]; then printf present; else printf 'not written'; fi)" "$(iname "$id")"
+      continue
+    fi
+    event reconciled "$(iname "$id")" "the coordinator states its worker ended (${who:-$(iget "$id" worker 'id never recorded')})"
     f="$(evidence_dir "$id")/take-$(iget "$id" takes).report.md"
     outcome=''; class=''; sig=''
     if [[ -s "$f" ]]; then
@@ -1517,13 +1652,17 @@ cmd_reconcile() {
     else in_list "$outcome" 'DONE PARTIAL BLOCKED FAIL' || outcome=''; fi
     in_list "$class" 'capability omission environment throttle flaky ambiguity scope' || class=''
     if [[ -z "$outcome" ]]; then
-      printf 'note: %s has no finished report for take %s: its worker is still running or was lost. If you still hold it, wait for its reply. If it is gone: ledger.sh result TASK %s UNUSABLE --sig "worker lost"\n' "$(iname "$id")" "$(iget "$id" takes)" "$(iname "$id")"
+      printf 'note: %s ended without a finished report for take %s; recording it as lost\n' "$(iname "$id")" "$(iget "$id" takes)"
+      cmd_result "$TASK" "$(iname "$id")" UNUSABLE --sig 'worker lost'
       continue
     fi
     printf 'note: %s finished with %s according to its report file; recording it\n' "$(iname "$id")" "$outcome"
     if [[ -n "$class" ]]; then cmd_result "$TASK" "$(iname "$id")" "$outcome" --class "$class" --sig "$sig"
     else cmd_result "$TASK" "$(iname "$id")" "$outcome" --sig "$sig"; fi
   done
+  if [[ "$waiting" -gt 0 ]]; then
+    printf 'next: nothing is dispatched while a worker of this batch may still be writing. If the host cannot show or stop a worker listed above, tell the user and wait for their word that it has ended; do not infer it from the report file.\n'
+  fi
 }
 cmd_pinning() { # the host overrides, hides or rejects the requested model or effort
   load_task "${1:-}"; shift
@@ -1586,7 +1725,7 @@ next_hint() {
   if [[ -n "$(rget batch_open '')" ]]; then
     printf 'next: batch %s is open; record each return: ledger.sh result TASK STAGE/SLUG OUTCOME. Still running:' "$(rget batch)"
     for id in $(cat "$TASK/batches/$(rget batch)/items"); do [[ "$(iget "$id" status)" == running ]] && printf ' %s' "$(iname "$id")"; done
-    printf '. If you no longer hold these workers (after a compaction): ledger.sh reconcile TASK\n'; return 0
+    printf '. If you no longer hold these workers (after a compaction): ledger.sh reconcile TASK lists each one with its recorded worker id\n'; return 0
   fi
   if [[ -n "$(rget drift_block '')" ]]; then printf 'next: files changed outside any dispatch: %s. %s\n' "$(rget drift_block)" "$(drift_help)"; return 0; fi
   if [[ "$(rget pinning unverified)" == mismatch ]]; then printf 'next: pinning: known mismatch (%s). %s\n' "$(rget pinning_cause)" "$(pinning_help)"; return 0; fi
@@ -1619,12 +1758,18 @@ open_reason() { # [paths changed after validation]
   if [[ -n "$(rget scope_block '')" ]]; then printf 'incomplete (out-of-scope changes unresolved)'; return 0; fi
   if [[ -n "$(rget drift_block '')" ]]; then printf 'incomplete (changes outside any dispatch unresolved)'; return 0; fi
   if [[ -n "$(rget batch_open '')" ]]; then printf 'incomplete (a batch is open)'; return 0; fi
+  if [[ -n "$(rget secret_paths '')" ]]; then printf 'incomplete (produced files hold a detected secret: %s)' "$(rget secret_paths)"; return 0; fi
   for id in $(items); do
     [[ "$(istage "$id")" == verify ]] && continue
     st=$(iget "$id" status)
     [[ "$st" == accepted || ( "$st" == done && "$(istage "$id")" == map ) ]] || { printf 'incomplete (%s is %s)' "$(iname "$id")" "$st"; return 0; }
   done
   if [[ -z "$(rget validated '')" ]]; then printf 'incomplete (nothing validated)'; return 0; fi
+  if [[ "$(rget validated_spec '')" != "$(spec_sig)" ]]; then printf 'incomplete (the criteria changed after validation)'; return 0; fi
+  # Every criterion as it stands now must have a verified PASS, whoever owns it.
+  for id in $(all_criteria); do
+    grep -q "^$id$(printf '\t')PASS$(printf '\t')" "$TASK/verified" 2>/dev/null || { printf 'incomplete (criterion %s is not verified)' "$id"; return 0; }
+  done
   if [[ -n "$(trim "${1:-}")" ]]; then printf 'INVALID (the workspace changed after validation: what was accepted is not what is on disk)'; return 0; fi
   printf 'complete'
 }
@@ -1690,9 +1835,17 @@ cmd_report() {
   done
   [[ ! -f "$TASK/mutations" ]] || muts=$(sort -u "$TASK/mutations" | wc -l | tr -d ' ')
   [[ ! -f "$TASK/refused" ]] || refused=$(sort -u "$TASK/refused" | wc -l | tr -d ' ')
-  [[ ! -s "$TASK/verified" ]] || soft=$(awk -F '\t' '$5 == "worker" { printf " %s", $1 }' "$TASK/verified")
-  # A pass on a check the worker chose is not an independent check of the criterion.
-  if [[ "$state" == complete && -n "$soft" ]]; then state="complete, PROVISIONAL (no check fixed in the plan for:$soft)"; fi
+  local savedonly='' inspected=''
+  if [[ -s "$TASK/verified" ]]; then
+    soft=$(awk -F '\t' '$5 == "worker" { printf " %s", $1 }' "$TASK/verified")
+    savedonly=$(awk -F '\t' '$5 == "saved" { printf " %s", $1 }' "$TASK/verified")
+    inspected=$(awk -F '\t' '$5 == "inspection" { printf " %s", $1 }' "$TASK/verified")
+  fi
+  # A pass on a check the worker chose, or on evidence a worker saved, is not an independent check of
+  # the criterion: the run is not reported as complete.
+  if [[ "$state" == complete && -n "$soft$savedonly" ]]; then
+    state="PROVISIONAL (every item accepted, but not independently checked:$(if [[ -n "$soft" ]]; then printf ' no check fixed in the plan for%s' "$soft"; fi)$(if [[ -n "$soft" && -n "$savedonly" ]]; then printf ';'; fi)$(if [[ -n "$savedonly" ]]; then printf ' only evidence a worker saved for%s' "$savedonly"; fi))"
+  fi
   # Verified only when the host showed, for every call, the requested effort and a model ID of the
   # required generation. An alias alone ("haiku") does not show which generation ran.
   local shown=0 calls=0 alias_only
@@ -1729,7 +1882,9 @@ cmd_report() {
       "$(for f in "$TASK"/evidence/*/escalation.md; do [[ -f "$f" ]] && printf ' | %s' "$f"; done)"
     printf 'Verified: criterion | result | evidence type | by | check fixed by\n'
     if [[ -s "$TASK/verified" ]]; then sed 's/^/  /' "$TASK/verified" | tr '\t' '|'; else printf '  none\n'; fi
-    printf 'Check basis: %s\n' "$(if [[ -n "$soft" ]]; then printf 'PROVISIONAL for%s: passed only a check a worker chose, which the script re-ran but cannot judge for relevance. Fix a check: (and expect:) for them in the plan to bind them' "$soft"; else printf 'every executed criterion passed a check fixed in the plan, or none was executed'; fi)"
+    printf 'Check basis: %s%s%s\n' "$(if [[ -n "$soft" ]]; then printf 'PROVISIONAL for%s: passed only a check a worker chose, which the script re-ran but cannot judge for relevance. ' "$soft"; fi)" \
+      "$(if [[ -n "$savedonly" ]]; then printf 'PROVISIONAL for%s: accepted on output or a source copy a worker saved; the script confirmed the quoted text is in that file and did not collect it. ' "$savedonly"; fi)" \
+      "$(if [[ -n "$soft$savedonly" ]]; then printf 'Fix a check: (and expect:) for them in the plan and the script runs it itself'; else printf 'every executed or collected criterion passed a check fixed in the plan'; fi)$(if [[ -n "$inspected" ]]; then printf '. By inspection only (a validator read the cited lines; the script confirmed they exist, not what they mean):%s' "$inspected"; fi). A plan check is trusted as written: the script refuses one that only prints fixed text but cannot tell whether it exercises the criterion"
     printf 'Choices: %s\n' "$(if [[ -f "$TASK/decisions.md" ]]; then tr '\n' ' ' < "$TASK/decisions.md"; else printf 'none'; fi)"
     printf 'Unresolved checks/work:'
     out=''
@@ -1748,14 +1903,16 @@ cmd_report() {
       "$(if [[ -f "$TASK/commands.log" ]]; then wc -l < "$TASK/commands.log" | tr -d ' '; else printf 0; fi)" "$TASK" \
       "$refused" "$(if [[ "$refused" != 0 ]]; then printf ' (%s/refused)' "$TASK"; fi)" "$muts" "$(if [[ "$muts" != 0 ]]; then printf ' (%s/mutations)' "$TASK"; fi)"
     printf 'Not covered by snapshots: external systems, ignored files\n'
-    printf 'Secrets: %s\n' "$(if [[ -n "$secrets" ]]; then printf 'DETECTED in %s. Their values are withheld from this report, the log and the briefs; do not share those files' "$secrets"; else printf 'none detected (by variable name and key pattern; not a guarantee)'; fi)"
+    printf 'Secrets: %s%s%s\n' "$(if [[ -n "$(rget secret_paths '')" ]]; then printf 'PRODUCED FILES HOLD A DETECTED SECRET (%s): not accepted until the value is removed. ' "$(rget secret_paths)"; fi)" \
+      "$(if [[ -s "$TASK/secret-events" ]]; then printf 'a detected value was withheld from %s before validators read it. ' "$(sort -u "$TASK/secret-events" | tr '\n' ' ' | sed 's/ $//')"; fi)" \
+      "$(if [[ -n "$secrets" ]]; then printf 'DETECTED in %s. Their values are withheld from this report, the log and the briefs; do not share those files' "$secrets"; else printf 'none detected (by variable name and key pattern; not a guarantee)'; fi)"
     printf 'Usage: %s\n' "${usage_text:-unavailable}"
     printf 'Post-acceptance defects: not assessed\n'
     printf 'Run files: %s\n' "$TASK"
   } | redact > "$TASK/report.md"
   local started
   started=$(rget started "$(now)")
-  say end run "$(if [[ "$state" == complete ]]; then printf done; elif [[ "$state" == complete* ]]; then printf 'done, provisional'; elif [[ -n "$snaperr" ]]; then printf 'ended: the workspace could not be checked'; elif [[ "$state" == INVALID* ]]; then printf 'ended: the workspace changed after validation'; else printf 'ended with open work'; fi)$(sep)$accepted/$total items accepted$(sep)$unresolved unresolved$(sep)$(elapsed $(( $(now) - started )))$(sep)peak $(rget peak 0) parallel"
+  say end run "$(if [[ "$state" == complete ]]; then printf done; elif [[ "$state" == PROVISIONAL* ]]; then printf 'done, provisional'; elif [[ -n "$snaperr" ]]; then printf 'ended: the workspace could not be checked'; elif [[ "$state" == INVALID* ]]; then printf 'ended: the workspace changed after validation'; else printf 'ended with open work'; fi)$(sep)$accepted/$total items accepted$(sep)$unresolved unresolved$(sep)$(elapsed $(( $(now) - started )))$(sep)peak $(rget peak 0) parallel"
   event report - "$accepted/$total accepted"
   cat "$TASK/report.md"
   if [[ -n "$snaperr" ]]; then printf 'ledger: the snapshot helper failed, so nothing is known about the workspace now: %s\n' "$snaperr" >&2; exit 3; fi
@@ -1836,6 +1993,7 @@ main() {
     dispatch) cmd_dispatch "$@" ;;
     defer) cmd_defer "$@" ;;
     result) cmd_result "$@" ;;
+    bind) cmd_bind "$@" ;;
     reconcile) cmd_reconcile "$@" ;;
     scope) cmd_scope "$@" ;;
     drift) cmd_drift "$@" ;;
